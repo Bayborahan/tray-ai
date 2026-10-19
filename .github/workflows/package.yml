@@ -1,0 +1,103 @@
+name: Tray-AI Otomatik Linux Paketleyici
+
+on:
+  release:
+    types: [published] # GitHub'da yeni bir sürüm (Release) yayınlandığınızda çalışır
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04 # Kararlılık için sabit Ubuntu sürümü
+
+    steps:
+    - name: Kodları Çek
+      uses: actions/checkout@v4
+
+    - name: Python Kur
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Bağımlılıkları Yükle
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: PyInstaller ile İçine Göm ve Derle
+      run: |
+        # Uygulamayı tüm bağımlılıklarıyla tek dosya (binary) yapar
+        pyinstaller --onefile --windowed main.py
+
+    - name: AppImage Paketini Üret
+      run: |
+        # AppImage için gerekli klasör yapısını (AppDir) kuruyoruz
+        mkdir -p AppDir/usr/bin
+        mkdir -p AppDir/usr/share/applications
+        mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+        
+        # Derlenen ana programı kopyala
+        cp dist/main AppDir/usr/bin/tray-ai
+        
+        # AppImage için zorunlu olan masaüstü kısayol (.desktop) dosyasını oluştur
+        cat <<EOF > AppDir/usr/share/applications/tray-ai.desktop
+        [Desktop Entry]
+        Type=Application
+        Name=Tray-AI
+        Exec=tray-ai
+        Icon=tray-ai
+        Categories=Utility;Development;
+        Comment=Advanced GGUF LLM Runner
+        Terminal=false
+        EOF
+        
+        # İkon kopyalama (Varsayılan bir simge yoksa boş bir tane üretir)
+        # Eğer projenizde ikon varsa buraya kendi ikon yolunuzu yazabilirsiniz
+        touch AppDir/usr/share/icons/hicolor/256x256/apps/tray-ai.png
+        ln -s usr/share/applications/tray-ai.desktop AppDir/tray-ai.desktop
+        ln -s usr/share/icons/hicolor/256x256/apps/tray-ai.png AppDir/tray-ai.png
+        
+        # AppRun scriptini oluştur (AppImage'ın başlangıç noktası)
+        cat <<EOF > AppDir/AppRun
+        #!/bin/sh
+        SELF=\$(dirname "\$(readlink -f "\$0")")
+        export PATH="\$SELF/usr/bin:\$PATH"
+        exec tray-ai "\$@"
+        EOF
+        chmod +x AppDir/AppRun
+        
+        # Resmi appimagetool aracını indir ve AppImage'ı paketle
+        sudo wget -O /usr/local/bin/appimagetool https://github.com
+        sudo chmod +x /usr/local/bin/appimagetool
+        
+        # GitHub Actions ortamında AppImage üretmek için bu parametre zorunludur
+        export ARCH=x86_64
+        export APPIMAGE_EXTRACT_AND_RUN=1
+        appimagetool AppDir Tray-AI-x86_64.AppImage
+
+    - name: Deb ve Rpm Paketlerini Üret (FPM Aracı ile)
+      run: |
+        # Gerekli paketleme sistemlerini kur
+        sudo apt-get update && sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm
+        sudo gem install --no-document fpm
+        
+        # Dağıtım paketleri için kök dizin hazırlığı
+        mkdir -p package_root/usr/bin
+        cp dist/main package_root/usr/bin/tray-ai
+
+        # Sürüm adını GitHub'dan dinamik alır (Örn: v1.0.0 -> 1.0.0)
+        VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/v//')
+        
+        # .deb ve .rpm paketlerini üret
+        fpm -s dir -t deb -n tray-ai -v "$VERSION" -C package_root .
+        fpm -s dir -t rpm -n tray-ai -v "$VERSION" -C package_root .
+
+    - name: Paketleri GitHub Sürümüne (Release) Yükle
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          *.AppImage
+          *.deb
+          *.rpm
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
