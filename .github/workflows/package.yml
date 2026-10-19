@@ -21,18 +21,20 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Resmi LunarG Vulkan SDK ve Paketleme Araçlarını Kur
+    - name: 3. Paketleme ve Vulkan Araçlarını Kur (Resmi glslc Binary Dahil)
       run: |
-        # 1. LunarG resmi Vulkan deposunu ekle (glslc ve tam SDK buradan gelir)
-        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.key | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
-        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
-        
         sudo apt-get update
-        sudo apt-get install -y vulkan-sdk ruby ruby-dev rubygems build-essential rpm cmake git pkg-config libcurl4-openssl-dev
+        sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
+                                libvulkan-dev vulkan-tools libcurl4-openssl-dev curl tar
         
-        # glslc'nin yolunu doğrula
-        which glslc || true
-        glslc --version || true
+        # Google Shaderc deposundan resmi hazır glslc binary'sini doğrudan indirip kur
+        echo ">>> glslc resmi ikili dosyası kuruluyor..."
+        curl -sSL "https://storage.googleapis.com/shaderc/artifacts/prod/build/git-shaderc/linux-x86_64/install.tgz" | sudo tar -xz -C /usr/local/
+        sudo chmod +x /usr/local/bin/glslc
+        
+        # glslc yolunu ve sürümünü doğrula
+        which glslc
+        glslc --version
 
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
@@ -46,7 +48,6 @@ jobs:
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama-build
         cd /tmp/llama-build
         
-        # LunarG Vulkan ve AVX2 bayraklarıyla bağımsız derleme
         cmake -B build \
           -DBUILD_SHARED_LIBS=OFF \
           -DGGML_NATIVE=OFF \
