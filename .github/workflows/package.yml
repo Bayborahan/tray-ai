@@ -21,18 +21,19 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Paketleme ve Vulkan Araclari
+    - name: 3. Vulkan SDK ve Paketleme Araclari
       run: |
         sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
-                                libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools spirv-tools
+        sudo apt-get install -y wget gnupg ca-certificates ruby ruby-dev rubygems build-essential rpm cmake git pkg-config libcurl4-openssl-dev
 
-        # glslc'yi resmi depodan tek komutla kur
-        curl -sSL "https://github.com/google/shaderc/releases/download/v2024.1/glslc-linux-x86_64.tar.gz" -o /tmp/glslc.tar.gz
-        sudo tar -xzf /tmp/glslc.tar.gz -C /usr/local/bin/
-        sudo chmod +x /usr/local/bin/glslc
-        rm -f /tmp/glslc.tar.gz
+        # LunarG resmi Vulkan SDK deposunu modern GPG anahtariyla ekle
+        wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan jammy main" | sudo tee /etc/apt/sources.list.d/lunarg-vulkan-jammy.list
 
+        sudo apt-get update
+        sudo apt-get install -y vulkan-sdk
+
+        # glslc'nin kuruldugunu dogrula
         which glslc
         glslc --version
 
