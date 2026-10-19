@@ -27,44 +27,12 @@ jobs:
       run: |
         pyinstaller --onefile --windowed main.py
 
-    - name: AppImage Paketini Üret
-      run: |
-        mkdir -p AppDir/usr/bin
-        mkdir -p AppDir/usr/share/applications
-        mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-        
-        cp dist/main AppDir/usr/bin/tray-ai
-        
-        cat <<EOF > AppDir/usr/share/applications/tray-ai.desktop
-        [Desktop Entry]
-        Type=Application
-        Name=Tray-AI
-        Exec=tray-ai
-        Icon=tray-ai
-        Categories=Utility;Development;
-        Comment=Advanced GGUF LLM Runner
-        Terminal=false
-        EOF
-        
-        touch AppDir/usr/share/icons/hicolor/256x256/apps/tray-ai.png
-        ln -s usr/share/applications/tray-ai.desktop AppDir/tray-ai.desktop
-        ln -s usr/share/icons/hicolor/256x256/apps/tray-ai.png AppDir/tray-ai.png
-        
-        cat <<EOF > AppDir/AppRun
-        #!/bin/sh
-        SELF=\$(dirname "\$(readlink -f "\$0")")
-        export PATH="\$SELF/usr/bin:\$PATH"
-        exec tray-ai "\$@"
-        EOF
-        chmod +x AppDir/AppRun
-        
-        # DÜZELTME: Doğrudan GitHub Release sayfalarından çalışan güncel aracı indiriyoruz
-        sudo wget -O /usr/local/bin/appimagetool https://github.com
-        sudo chmod +x /usr/local/bin/appimagetool
-        
-        export ARCH=x86_64
-        export APPIMAGE_EXTRACT_AND_RUN=1
-        appimagetool AppDir Tray-AI-x86_64.AppImage
+    - name: AppImage Paketini Üret (Güvenli Yöntem)
+      uses: AppImageCommunity/action-appimagetool@v1
+      with:
+        app_dir: 'dist'
+        # dist klasörünün içindeki derlenmiş main dosyasını otomatik AppImage yapar
+        entrypoint: 'main'
 
     - name: Deb ve Rpm Paketlerini Üret (FPM Aracı ile)
       run: |
@@ -88,3 +56,4 @@ jobs:
           *.rpm
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
