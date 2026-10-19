@@ -209,7 +209,22 @@ class ServerManager:
 
         engine_path = os.path.join(self.engines_dir, engine_name)
         if not os.path.exists(engine_path):
-            raise FileNotFoundError(f"Motor bulunamadı: {engine_path}")
+            # Fallback kontrolü: Proje dizininde veya /opt/tray-ai/engines altında var mı?
+            fallback_paths = [
+                os.path.join(BASE_DIR, "engines", engine_name),
+                os.path.join("/opt/tray-ai/engines", engine_name)
+            ]
+            found = False
+            for fb in fallback_paths:
+                if os.path.exists(fb):
+                    import shutil
+                    os.makedirs(self.engines_dir, exist_ok=True)
+                    shutil.copy2(fb, engine_path)
+                    os.chmod(engine_path, 0o755)
+                    found = True
+                    break
+            if not found:
+                raise FileNotFoundError(f"Motor bulunamadı: {engine_path}\nLütfen Ayarlar (⚙️) -> Runtime & Engines bölümünden motoru indirin veya güncelleyin.")
 
         os.chmod(engine_path, 0o755)
 

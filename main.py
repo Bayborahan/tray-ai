@@ -31,16 +31,24 @@ from ui.styles import DARK_STYLE
 
 USER_ENGINES_DIR = os.path.expanduser("~/.local/share/tray-ai/engines")
 os.makedirs(USER_ENGINES_DIR, exist_ok=True)
-_bundled_eng = USER_ENGINES_DIR
-if os.path.isdir(_bundled_eng):
-    import shutil
-    for _f in os.listdir(_bundled_eng):
-        _src = os.path.join(_bundled_eng, _f)
-        _dst = os.path.join(USER_ENGINES_DIR, _f)
-        if os.path.isfile(_src) and not os.path.exists(_dst):
-            shutil.copy2(_src, _dst)
-            if "llama-server" in _f:
-                os.chmod(_dst, 0o755)
+
+# Gömülü gelen motorları (/opt/tray-ai/engines veya proje dizini) kullanıcının yazılabilir alanına aktar
+search_dirs = [
+    os.path.join(BASE_DIR, "engines"),
+    "/opt/tray-ai/engines"
+]
+for sdir in search_dirs:
+    if os.path.isdir(sdir):
+        import shutil
+        for ef in ["llama-server", "llama-server-turboquant"]:
+            src = os.path.join(sdir, ef)
+            dst = os.path.join(USER_ENGINES_DIR, ef)
+            if os.path.exists(src) and not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                    os.chmod(dst, 0o755)
+                except Exception:
+                    pass
 
 CONFIG_DIR = os.path.expanduser("~/.config/tray-ai")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
