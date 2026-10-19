@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+# YENİ EKLENEN İZİN BLOĞU
+permissions:
+  contents: write
+
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
@@ -25,9 +29,7 @@ jobs:
 
     - name: PyInstaller ile İçine Göm ve Derle
       run: |
-        # Uygulamayı tüm kütüphaneleriyle tek bir çalıştırılabilir dosya yapar
         pyinstaller --onefile --windowed main.py
-        # Çıktı dosyasının adını Tray-AI olarak düzenliyoruz
         mv dist/main dist/Tray-AI-Linux-x86_64
 
     - name: Deb ve Rpm Paketlerini Üret (FPM Aracı ile)
@@ -47,6 +49,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
+          dist/Share-AI-Linux-x86_64
           dist/Tray-AI-Linux-x86_64
           *.deb
           *.rpm
