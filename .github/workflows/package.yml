@@ -27,9 +27,34 @@ jobs:
         sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
                                 libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools spirv-tools
 
-        # glslangValidator'un hazir oldugunu dogrula
-        which glslangValidator
-        glslangValidator --version
+        # glslc temini: Google shaderc resmi GitHub release ikilisini yukle
+        echo ">>> glslc kuruluyor..."
+        curl -sSL "https://github.com/google/shaderc/releases/download/v2024.1/glslc-linux-x86_64.tar.gz" -o /tmp/glslc.tar.gz || true
+        
+        if [ -s /tmp/glslc.tar.gz ] && tar -ztf /tmp/glslc.tar.gz >/dev/null 2>&1; then
+          sudo tar -xzf /tmp/glslc.tar.gz -C /usr/local/bin/
+          sudo chmod +x /usr/local/bin/glslc
+        else
+          echo ">>> Alternatif: glslangValidator wrapper glslc olarak olusturuluyor..."
+          sudo bash -c 'cat << "SHIM" > /usr/local/bin/glslc
+#!/usr/bin/env bash
+args=()
+output=""
+for arg in "$@"; do
+  if [ "$arg" == "-o" ]; then
+    args+=("-o")
+  else
+    args+=("$arg")
+  fi
+done
+exec glslangValidator -V "${args[@]}"
+SHIM'
+          sudo chmod +x /usr/local/bin/glslc
+        fi
+
+        # Dogrulama
+        which glslc
+        glslc --version || true
 
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
@@ -42,13 +67,11 @@ jobs:
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama-build
         cd /tmp/llama-build
         
-        # glslc yerine glslangValidator kullaniyoruz (glslc aramasi tamamen kapatildi)
         cmake -B build \
           -DBUILD_SHARED_LIBS=OFF \
           -DGGML_NATIVE=OFF \
           -DGGML_AVX2=ON \
-          -DGGML_VULKAN=ON \
-          -DGGML_VULKAN_SHADERC=OFF
+          -DGGML_VULKAN=ON
           
         cmake --build build --config Release --target llama-server -j$(nproc)
         
