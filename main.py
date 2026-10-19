@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QDoubleSpinBox, QProgressBar, QMessageBox, 
     QScrollArea, QFrame, QGroupBox, QPlainTextEdit, QGridLayout,
     QInputDialog, QStackedWidget, QSplitter, QDialog, QTableWidget, QTableWidgetItem, QHeaderView
-)
+            )
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer, QLocale
 from PyQt6.QtGui import QIcon, QAction, QColor, QPixmap, QCursor, QGuiApplication, QPainter, QBrush
 
@@ -40,7 +40,7 @@ search_dirs = [
 for sdir in search_dirs:
     if os.path.isdir(sdir):
         import shutil
-        for ef in ["llama-server", "llama-server-turboquant"]:
+        for ef in ["llama-server"]:
             src = os.path.join(sdir, ef)
             dst = os.path.join(USER_ENGINES_DIR, ef)
             if os.path.exists(src) and not os.path.exists(dst):
@@ -324,7 +324,7 @@ class MetadataInspectorDialog(QDialog):
             f"<b>Head Boyutu (K/V):</b> {extra.get('key_length', 128)} / {extra.get('value_length', 128)}<br>"
             f"<b>RoPE Base / Scale:</b> {extra.get('rope_freq_base', 10000)} / {extra.get('rope_scale', 1.0)} ({extra.get('rope_scaling_type', 'none')})  |  "
             f"<b>BOS / EOS Token ID:</b> {extra.get('bos_token_id', -1)} / {extra.get('eos_token_id', -1)}"
-        )
+            )
         summary.setWordWrap(True)
         summary.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; padding: 10px; border-radius: 6px; font-size: 12px;")
         layout.addWidget(summary)
@@ -739,26 +739,7 @@ class TrayAIApp(QMainWindow):
         h_rt_top.addWidget(self.btn_check_eng_updates)
         v_rt.addLayout(h_rt_top)
 
-        # TurboQuant Özel Git Deposu / Yerel Klasör Yolu Ayarı
-        turbo_src_frame = QFrame()
-        turbo_src_frame.setStyleSheet("background: #1a1b26; border: 1px dashed #3b4261; border-radius: 5px; padding: 4px;")
-        h_tsrc = QHBoxLayout(turbo_src_frame)
-        h_tsrc.setContentsMargins(6, 4, 6, 4)
-        h_tsrc.addWidget(QLabel("<b>TurboQuant Repo / Klasör:</b>"))
-        self.input_turbo_repo = QLineEdit()
-        self.input_turbo_repo.setPlaceholderText("Git URL veya Yerel Klasör (örn: https://github.com/... veya /home/anonymous/...)")
-        self.input_turbo_repo.setText(self.cfg.get("turbo_repo", "https://github.com/ggml-org/llama.cpp.git"))
-        self.input_turbo_repo.textChanged.connect(self.save_turbo_repo_cfg)
-        h_tsrc.addWidget(self.input_turbo_repo, 2)
-
-        h_tsrc.addWidget(QLabel("Dal (Branch):"))
-        self.input_turbo_branch = QLineEdit()
-        self.input_turbo_branch.setPlaceholderText("master / turboquant")
-        self.input_turbo_branch.setFixedWidth(110)
-        self.input_turbo_branch.setText(self.cfg.get("turbo_branch", ""))
-        self.input_turbo_branch.textChanged.connect(self.save_turbo_repo_cfg)
-        h_tsrc.addWidget(self.input_turbo_branch)
-        v_rt.addWidget(turbo_src_frame)
+        # TurboQuant frame kaldirildi
 
         # Motor Kartları
         self.rt_cards_layout = QVBoxLayout()
@@ -841,10 +822,8 @@ class TrayAIApp(QMainWindow):
         if self.cfg.get("auto_update_engine", True):
             QTimer.singleShot(1200, self.check_engine_updates)
 
-    def save_turbo_repo_cfg(self):
-        self.cfg["turbo_repo"] = self.input_turbo_repo.text().strip()
-        self.cfg["turbo_branch"] = self.input_turbo_branch.text().strip()
-        save_json(CONFIG_FILE, self.cfg)
+    pass
+        # save_json temizlendi
 
     def save_auto_update_pref(self, checked):
         self.cfg["auto_update_engine"] = checked
@@ -863,7 +842,7 @@ class TrayAIApp(QMainWindow):
         self.latest_engine_info = info
         self.lbl_eng_update_status.setText(
             f"✅ Son Resmi Sürüm: {info['latest_tag']} ({info['published_at']})  |  Yerel Motor: {info['local_main']}"
-        )
+            )
         self.populate_runtime_cards(info)
 
     def populate_runtime_cards(self, info):
@@ -880,13 +859,7 @@ class TrayAIApp(QMainWindow):
                 "local_ver": info.get("local_main", ""),
                 "compat": info.get("has_vulkan", True)
             },
-            {
-                "key": "turboquant",
-                "title": "TurboQuant llama.cpp (Linux)",
-                "desc": "High-speed quantized inference engine (llama-server-turboquant)",
-                "local_ver": info.get("local_turbo", ""),
-                "compat": True
-            },
+            
             {
                 "key": "cpu",
                 "title": "CPU llama.cpp (Linux)",
@@ -955,16 +928,12 @@ class TrayAIApp(QMainWindow):
         self.prog_eng_update.setValue(5)
         self.lbl_eng_update_status.setText(f"⏳ {target_key.upper()} motoru güncelleniyor...")
 
-        t_repo = self.input_turbo_repo.text().strip() if hasattr(self, "input_turbo_repo") else "https://github.com/ggml-org/llama.cpp.git"
-        t_branch = self.input_turbo_branch.text().strip() if hasattr(self, "input_turbo_branch") else ""
         self.eng_updater = EngineUpdateWorker(
             engines_dir=USER_ENGINES_DIR,
             target_type=target_key,
             mode=mode,
             asset_url=asset_url,
-            turbo_repo=t_repo,
-            turbo_branch=t_branch
-        )
+            )
         self.eng_updater.progress_msg.connect(self.on_eng_update_progress)
         self.eng_updater.finished_ok.connect(self.on_eng_update_finished)
         self.eng_updater.error_occurred.connect(self.on_eng_update_error)
@@ -1031,7 +1000,7 @@ class TrayAIApp(QMainWindow):
             f"Icon={ICON_PATH}\n"
             "Terminal=false\n"
             "Categories=Development;ArtificialIntelligence;Utility;\n"
-        )
+            )
         with open(desk_file, "w", encoding="utf-8") as f:
             f.write(content)
         os.chmod(desk_file, 0o755)
@@ -1055,7 +1024,7 @@ class TrayAIApp(QMainWindow):
             self.t("pwd_title"),
             self.t("pwd_prompt"),
             QLineEdit.EchoMode.Password
-        )
+            )
         if not ok or not pwd:
             return
 
@@ -1078,7 +1047,7 @@ class TrayAIApp(QMainWindow):
                     self,
                     self.t("ram_freed_title"),
                     self.t("ram_freed_msg").format(before=mem_before, after=mem_after, diff=diff)
-                )
+            )
             else:
                 err_detail = (proc.stderr or "").strip()
                 QMessageBox.warning(self, self.t("pwd_title"), f"{self.t('ram_err_msg')}\n\n{err_detail}")
@@ -1132,13 +1101,7 @@ class TrayAIApp(QMainWindow):
         l = QVBoxLayout(tab)
         l.setSpacing(10)
 
-        motor_box = QHBoxLayout()
-        self.lbl_engine_title = QLabel()
-        self.cb_engine = QComboBox()
-        self.cb_engine.addItems(["llama-server", "llama-server-turboquant"])
-        motor_box.addWidget(self.lbl_engine_title)
-        motor_box.addWidget(self.cb_engine)
-        l.addLayout(motor_box)
+        # Motor kutusu kaldirildi (Varsayilan: llama-server)
 
         self.lbl_model_meta_summary = QLabel()
         self.lbl_model_meta_summary.setWordWrap(True)
@@ -1218,12 +1181,12 @@ class TrayAIApp(QMainWindow):
         grid_kv = QGridLayout(self.grp_kv)
         grid_kv.addWidget(QLabel("K Cache (-ctk):"), 0, 0)
         self.cb_cache_k = QComboBox()
-        self.cb_cache_k.addItems(["f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3", "tq3_0", "tq2_0"])
+        self.cb_cache_k.addItems(["f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"])
         grid_kv.addWidget(self.cb_cache_k, 0, 1)
 
         grid_kv.addWidget(QLabel("V Cache (-ctv):"), 0, 2)
         self.cb_cache_v = QComboBox()
-        self.cb_cache_v.addItems(["f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "turbo4", "turbo3", "tq3_0", "tq2_0"])
+        self.cb_cache_v.addItems(["f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"])
         grid_kv.addWidget(self.cb_cache_v, 0, 3)
 
         self.chk_fa = QCheckBox("Flash Attention (-fa)")
@@ -1960,7 +1923,6 @@ class TrayAIApp(QMainWindow):
         if not self.cfg.get("last_folder"):
             self.lbl_folder.setText(self.t("lbl_no_folder"))
 
-        self.lbl_engine_title.setText(self.t("lbl_engine"))
         if not self.active_model_info:
             self.lbl_model_meta_summary.setText(self.t("lbl_no_meta"))
         self.grp_ctx.setTitle(self.t("grp_ctx"))
@@ -2078,7 +2040,7 @@ class TrayAIApp(QMainWindow):
             self.spin_ngl.value(),
             self.cb_cache_k.currentText(),
             self.cb_cache_v.currentText()
-        )
+            )
         sys_ram = max(1.0, self.hw_info.get("ram_gb", 32.0))
         pct = min(100, int((est["total_gb"] / sys_ram) * 100))
         self.bar_mem_estimate.setValue(pct)
@@ -2088,7 +2050,7 @@ class TrayAIApp(QMainWindow):
             f"💾 <b>Tahmini Bellek: {est['total_gb']} GB</b> "
             f"(Model: {self.active_model_info['size_gb']} GB + KV Cache: {est['kv_gb']} GB)  —  "
             f"<b>{status_icon} (Sistem: %{pct})</b>"
-        )
+            )
 
     def open_model_in_file_manager(self):
         if not self.selected_model_path or not os.path.exists(self.selected_model_path):
@@ -2108,7 +2070,7 @@ class TrayAIApp(QMainWindow):
             "Modeli Silmeyi Onayla",
             f"<b>{m_name}</b> dosyası diskten kalıcı olarak silinecek!\n\nEmin misiniz?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+            )
         if ans == QMessageBox.StandardButton.Yes:
             if self.server_mgr.is_running():
                 self.unload_current_model()
@@ -2200,7 +2162,7 @@ class TrayAIApp(QMainWindow):
             f"<b>Model:</b> {info['filename']} | <b>Arch:</b> {info['arch']} | "
             f"<b>Layers:</b> {info['total_layers']} | <b>Max Ctx:</b> {info['max_context']} | "
             f"<b>Embed:</b> {extra_m.get('embed_length', 0)} | <b>KV Heads:</b> {extra_m.get('head_count_kv', 0)}"
-        )
+            )
 
         layers = info.get("total_layers", 32)
         self.slider_ngl.setRange(0, layers)
@@ -2243,7 +2205,7 @@ class TrayAIApp(QMainWindow):
         if not self.selected_model_path or not os.path.exists(self.selected_model_path):
             return
 
-        engine = self.cb_engine.currentText()
+        engine = "llama-server"
         ngl = self.spin_ngl.value()
         ctx = self.spin_ctx.value()
         port = self.spin_port.value()

@@ -42,7 +42,7 @@ class EngineVersionChecker(QThread):
     def run(self):
         info = {
             "local_main": self.get_local_version("llama-server"),
-            "local_turbo": self.get_local_version("llama-server-turboquant"),
+            
             "latest_tag": "Bilinmiyor",
             "published_at": "",
             "release_notes": "",
@@ -89,7 +89,7 @@ class EngineUpdateWorker(QThread):
                  turbo_repo="https://github.com/ggml-org/llama.cpp.git", turbo_branch=""):
         super().__init__()
         self.engines_dir = os.path.abspath(engines_dir)
-        self.target_type = target_type  # "vulkan", "cpu", "turboquant", "rocm", "cuda"
+        self.target_type = target_type  # "vulkan", "cpu", "rocm", "cuda"
         self.mode = mode  # "download" veya "build"
         self.asset_url = asset_url
         self.turbo_repo = turbo_repo.strip() or "https://github.com/ggml-org/llama.cpp.git"
@@ -99,7 +99,7 @@ class EngineUpdateWorker(QThread):
         try:
             os.makedirs(self.engines_dir, exist_ok=True)
             # TurboQuant her zaman kaynak koddan veya kendi özel deposundan derlenir ki llama-server-turboquant olarak çıksın
-            if self.target_type == "turboquant" or self.mode == "build" or not self.asset_url:
+            if self.mode == "build" or not self.asset_url:
                 self._build_from_source()
             else:
                 self._download_and_extract()
@@ -107,7 +107,7 @@ class EngineUpdateWorker(QThread):
             self.error_occurred.emit(str(e))
 
     def _download_and_extract(self):
-        dest_bin_name = "llama-server-turboquant" if self.target_type == "turboquant" else "llama-server"
+        dest_bin_name = "llama-server"
         self.progress_msg.emit(10, f"GitHub'dan {self.target_type.upper()} paketi indiriliyor -> {dest_bin_name}...")
         tmp_archive = "/tmp/llama_engine_pkg"
         r = requests.get(self.asset_url, stream=True, timeout=30)
@@ -158,12 +158,11 @@ class EngineUpdateWorker(QThread):
         self.finished_ok.emit(self.target_type)
 
     def _build_from_source(self):
-        is_turbo = (self.target_type == "turboquant")
-        dest_bin_name = "llama-server-turboquant" if is_turbo else "llama-server"
-        build_dir = "/tmp/tray_ai_turbo_build" if is_turbo else "/tmp/tray_ai_llama_build"
+        dest_bin_name = "llama-server"
+        build_dir = "/tmp/tray_ai_llama_build"
         shutil.rmtree(build_dir, ignore_errors=True)
 
-        repo_url = self.turbo_repo if is_turbo else "https://github.com/ggml-org/llama.cpp.git"
+        repo_url = "https://github.com/ggml-org/llama.cpp.git"
 
         # Eğer yerel bir klasör yolu verildiyse (örn: /home/anonymous/turboquant-llama.cpp) doğrudan oradan kopyala/derle
         if os.path.isdir(repo_url):
@@ -186,7 +185,7 @@ class EngineUpdateWorker(QThread):
             "-DGGML_NATIVE=ON"
         ]
 
-        if self.target_type in ("vulkan", "turboquant"):
+        if self.target_type == "vulkan":
             cmake_args.append("-DGGML_VULKAN=ON")
         elif self.target_type == "rocm":
             cmake_args.append("-DGGML_HIP=ON")
