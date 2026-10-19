@@ -27,7 +27,6 @@ jobs:
         sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
                                 libvulkan-dev vulkan-tools libcurl4-openssl-dev curl tar
         
-        # Google Shaderc resmi glslc ikili dosyasını doğrudan indir
         echo ">>> glslc kuruluyor..."
         curl -sSL "https://storage.googleapis.com/shaderc/artifacts/prod/build/git-shaderc/linux-x86_64/install.tgz" | sudo tar -xz -C /usr/local/
         sudo chmod +x /usr/local/bin/glslc
@@ -103,7 +102,7 @@ EOF_DESKTOP
 
         RAW_VER="${{ github.event.release.tag_name }}"
         VERSION="${RAW_VER#v}"
-        if [ -z "$VERSION" ]; then VERSION="1.0.2"; fi
+        if [ -z "$VERSION" ]; then VERSION="1.0.0"; fi
 
         fpm -s dir -t deb -n tray-ai -v "$VERSION" \
           --description "Tray AI: Local GGUF LLM Server in System Tray" \
