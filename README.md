@@ -61,9 +61,11 @@ pip install -r requirements.txt
 3. Launch the application:
 ```bash
 python main.py
+```
 
 ```bash
 ./run.sh
+```
 
 ## 🚀 How to Use
 1. Launch the application; a dedicated icon will appear in your Linux system tray (top/bottom corner depending on your desktop environment).
