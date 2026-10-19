@@ -21,28 +21,15 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Vulkan SDK ve glslc Kurulumu
+    - name: 3. Paketleme ve Vulkan Araclari
       run: |
         sudo apt-get update
         sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
-                                libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools
+                                libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools spirv-tools
 
-        # glslc'yi resmi LunarG Linux tarball'undan dogrudan al ve PATH'e yerlestir
-        echo ">>> LunarG resmi SDK paketi indiriliyor..."
-        curl -sSL "https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz" -o /tmp/vulkansdk.tar.xz
-        mkdir -p /tmp/vulkan-sdk
-        tar -xf /tmp/vulkansdk.tar.xz -C /tmp/vulkan-sdk --strip-components=2
-        
-        # Binary ve kutuphaneleri sisteme bagla
-        sudo cp -r /tmp/vulkan-sdk/x86_64/bin/* /usr/local/bin/
-        sudo cp -r /tmp/vulkan-sdk/x86_64/include/* /usr/local/include/
-        sudo cp -r /tmp/vulkan-sdk/x86_64/lib/* /usr/local/lib/
-        sudo ldconfig
-        rm -rf /tmp/vulkansdk.tar.xz /tmp/vulkan-sdk
-
-        # Dogrulama
-        which glslc
-        glslc --version
+        # glslangValidator'un hazir oldugunu dogrula
+        which glslangValidator
+        glslangValidator --version
 
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
@@ -54,14 +41,24 @@ jobs:
         rm -rf /tmp/llama-build
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama-build
         cd /tmp/llama-build
-        cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_VULKAN=ON
+        
+        # glslc yerine glslangValidator kullaniyoruz (glslc aramasi tamamen kapatildi)
+        cmake -B build \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DGGML_NATIVE=OFF \
+          -DGGML_AVX2=ON \
+          -DGGML_VULKAN=ON \
+          -DGGML_VULKAN_SHADERC=OFF
+          
         cmake --build build --config Release --target llama-server -j$(nproc)
+        
         cd ${{ github.workspace }}
         mkdir -p engines
         cp -f /tmp/llama-build/build/bin/llama-server engines/llama-server
         cp -f /tmp/llama-build/build/bin/llama-server engines/llama-server-turboquant
         chmod +x engines/*
         rm -rf /tmp/llama-build
+        echo "✅ Motor basariyla derlendi!"
 
     - name: 5. PyInstaller ile Paketle
       run: |
