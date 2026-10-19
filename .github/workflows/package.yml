@@ -25,14 +25,10 @@ jobs:
 
     - name: PyInstaller ile İçine Göm ve Derle
       run: |
+        # Uygulamayı tüm kütüphaneleriyle tek bir çalıştırılabilir dosya yapar
         pyinstaller --onefile --windowed main.py
-
-    - name: AppImage Paketini Üret (Güvenli Yöntem)
-      uses: AppImageCommunity/action-appimagetool@v1
-      with:
-        app_dir: 'dist'
-        # dist klasörünün içindeki derlenmiş main dosyasını otomatik AppImage yapar
-        entrypoint: 'main'
+        # Çıktı dosyasının adını Tray-AI olarak düzenliyoruz
+        mv dist/main dist/Tray-AI-Linux-x86_64
 
     - name: Deb ve Rpm Paketlerini Üret (FPM Aracı ile)
       run: |
@@ -40,7 +36,7 @@ jobs:
         sudo gem install --no-document fpm
         
         mkdir -p package_root/usr/bin
-        cp dist/main package_root/usr/bin/tray-ai
+        cp dist/Tray-AI-Linux-x86_64 package_root/usr/bin/tray-ai
 
         VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/v//')
         
@@ -51,7 +47,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          *.AppImage
+          dist/Tray-AI-Linux-x86_64
           *.deb
           *.rpm
       env:
