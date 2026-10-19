@@ -1106,6 +1106,15 @@ class TrayAIApp(QMainWindow):
         top_btn.addWidget(self.btn_rescan)
         top_btn.addWidget(self.lbl_folder)
         top_btn.addStretch()
+
+        self.btn_open_folder = QPushButton("📁 Klasörde Göster")
+        self.btn_open_folder.clicked.connect(self.open_model_in_file_manager)
+        top_btn.addWidget(self.btn_open_folder)
+
+        self.btn_delete_model = QPushButton("🗑️ Modeli Sil")
+        self.btn_delete_model.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold;")
+        self.btn_delete_model.clicked.connect(self.delete_selected_model_file)
+        top_btn.addWidget(self.btn_delete_model)
         l.addLayout(top_btn)
 
         self.list_models = QListWidget()
@@ -2081,6 +2090,44 @@ class TrayAIApp(QMainWindow):
             f"<b>{status_icon} (Sistem: %{pct})</b>"
         )
 
+    def open_model_in_file_manager(self):
+        if not self.selected_model_path or not os.path.exists(self.selected_model_path):
+            QMessageBox.information(self, "Tray AI", "Lütfen önce listeden bir model seçin.")
+            return
+        folder = os.path.dirname(self.selected_model_path)
+        subprocess.Popen(["xdg-open", folder])
+
+    def delete_selected_model_file(self):
+        if not self.selected_model_path or not os.path.exists(self.selected_model_path):
+            QMessageBox.information(self, "Tray AI", "Lütfen önce silmek istediğiniz modeli seçin.")
+            return
+
+        m_name = os.path.basename(self.selected_model_path)
+        ans = QMessageBox.question(
+            self,
+            "Modeli Silmeyi Onayla",
+            f"<b>{m_name}</b> dosyası diskten kalıcı olarak silinecek!\n\nEmin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if ans == QMessageBox.StandardButton.Yes:
+            if self.server_mgr.is_running():
+                self.unload_current_model()
+
+            try:
+                os.remove(self.selected_model_path)
+                # SQLite önbelleğinden sil
+                if hasattr(self, "cache_mgr"):
+                    with self.cache_mgr._get_conn() as conn:
+                        conn.execute("DELETE FROM models WHERE path = ?", (self.selected_model_path,))
+                QMessageBox.information(self, "Silindi", f"{m_name} başarıyla diskten silindi.")
+                self.selected_model_path = None
+                self.active_model_info = None
+                folder = self.cfg.get("last_folder", "")
+                if folder:
+                    self.load_from_sqlite_instant(folder)
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Dosya silinemedi:\n{e}")
+
     def choose_draft_model(self):
         last_dir = self.cfg.get("last_folder", os.path.expanduser("~"))
         f, _ = QFileDialog.getOpenFileName(self, "Draft Model (.gguf)", last_dir, "GGUF (*.gguf)")
@@ -2125,13 +2172,16 @@ class TrayAIApp(QMainWindow):
     def add_model_item_to_list(self, info):
         self.loaded_models[info["path"]] = info
         badges = []
-        if info["has_thinking"]: badges.append("🧠")
-        if info["has_tools"]: badges.append("🔧")
-        if info["has_vision"]: badges.append("👁️")
-        if info["has_mtp"]: badges.append("⚡MTP")
+        pub = info.get("publisher", "Bilinmiyor")
+        pub_str = f"🏢 {pub}" if pub != "Bilinmiyor" else ""
+        if pub_str: badges.append(pub_str)
+        if info.get("has_thinking"): badges.append("🧠")
+        if info.get("has_tools"): badges.append("🔧")
+        if info.get("has_vision"): badges.append("👁️")
+        if info.get("has_mtp"): badges.append("⚡MTP")
 
-        badge_str = f" [{' '.join(badges)}]" if badges else ""
-        txt = f"{info['filename']} ({info['size_gb']} GB)\n↳ Layers: {info['total_layers']} | Max Ctx: {info['max_context']} | {info['quant']}{badge_str}"
+        badge_str = f" [{' | '.join(badges)}]" if badges else ""
+        txt = f"{info['filename']} ({info['size_gb']} GB)\n↳ {info['arch'].upper()} | Katman: {info['total_layers']} | Ctx: {info['max_context']} | {info['quant']}{badge_str}"
         item = QListWidgetItem(txt)
         item.setData(Qt.ItemDataRole.UserRole, info["path"])
         self.list_models.addItem(item)
@@ -2169,14 +2219,15 @@ class TrayAIApp(QMainWindow):
         self.recalculate_memory_estimate()
         self.spin_rope_scale.setValue(float(extra_m.get("rope_scale", 1.0)))
 
-        if info.get("has_mtp", False):
+        has_real_mtp = info.get("has_mtp", False) and info.get("mtp_layers", 0) > 0
+        if has_real_mtp:
             self.chk_mtp.setEnabled(True)
             self.chk_mtp.setChecked(True)
-            self.chk_mtp.setText(self.t("chk_mtp_ supported"))
+            self.chk_mtp.setText(f"MTP ({info.get('mtp_layers', 1)} Katman Spekülatif Tahmin) Aktif")
         else:
             self.chk_mtp.setEnabled(False)
             self.chk_mtp.setChecked(False)
-            self.chk_mtp.setText(self.t("chk_mtp_none"))
+            self.chk_mtp.setText("Modelde MTP Desteği Yok (Devre Dışı)")
 
         if info.get("has_thinking", False):
             self.cb_thinking_effort.setEnabled(True)
@@ -2289,6 +2340,10 @@ class TrayAIApp(QMainWindow):
         custom_f = self.input_custom_flags.text().strip()
         if custom_f:
             extra.extend(custom_f.split())
+
+        # MTP Destekli Modellerde Spekülatif Kod Çözme Parametreleri
+        if self.chk_mtp.isEnabled() and self.chk_mtp.isChecked():
+            extra.extend(["--draft-max", "2", "--draft-min", "1"])
 
         if self.chk_enable_draft.isChecked() and self.selected_draft_path:
             extra.extend(["-md", self.selected_draft_path, "--draft-max", str(self.spin_draft_max.value())])

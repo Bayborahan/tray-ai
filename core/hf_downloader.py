@@ -13,12 +13,7 @@ QUANT_PATTERNS = [
 def detect_capabilities_from_tags_and_name(model_id, tags=None):
     tags = [t.lower() for t in (tags or [])]
     name_low = model_id.lower()
-    caps = {
-        "thinking": False,
-        "tools": False,
-        "vision": False,
-        "audio": False
-    }
+    caps = {"thinking": False, "tools": False, "vision": False, "audio": False}
     if any(k in name_low for k in ["r1", "qwq", "qwen3", "thinking", "reasoning", "marco-o1", "sky-t1"]) or "reasoning" in tags:
         caps["thinking"] = True
     if any(k in name_low for k in ["coder", "instruct", "qwen", "llama-3", "mistral", "hermes", "function", "tool"]) or "conversational" in tags:
@@ -45,7 +40,7 @@ class HFSearchWorker(QThread):
     def __init__(self, query="", mode="trending", limit=25, token=""):
         super().__init__()
         self.query = query.strip()
-        self.mode = mode  # "trending", "downloads", "likes", "recent", "search"
+        self.mode = mode
         self.limit = limit
         self.token = token.strip()
 
@@ -55,8 +50,11 @@ class HFSearchWorker(QThread):
             if self.token:
                 headers["Authorization"] = f"Bearer {self.token}"
 
+            # SADECE DİL MODELLERİ (Text-Generation) Filtresi!
+            # Flux, SD, embedding modelleri hariç tutulur.
             params = {
                 "filter": "gguf",
+                "pipeline_tag": "text-generation",
                 "limit": self.limit,
                 "full": "true"
             }
@@ -87,6 +85,11 @@ class HFSearchWorker(QThread):
                 mid = item.get("id", "")
                 if not mid:
                     continue
+                # Ek filtre: embedding ve diffusers modellerini temizle
+                m_low = mid.lower()
+                if any(x in m_low for x in ["bge-", "embed", "flux", "diffusion", "stable-diffusion"]):
+                    continue
+
                 tags = item.get("tags", [])
                 caps = detect_capabilities_from_tags_and_name(mid, tags)
                 results.append({
@@ -117,7 +120,6 @@ class HFFilesWorker(QThread):
             if self.token:
                 headers["Authorization"] = f"Bearer {self.token}"
 
-            # Tree endpoint dosya boyutlarını doğrudan byte cinsinden verir
             url = f"https://huggingface.co/api/models/{self.repo_id}/tree/main"
             resp = requests.get(url, headers=headers, timeout=12)
             resp.raise_for_status()
@@ -128,7 +130,6 @@ class HFFilesWorker(QThread):
                 path = node.get("path", "")
                 if path.lower().endswith(".gguf"):
                     size_bytes = node.get("size", 0)
-                    # LFS altındaysa gerçek boyutu lfs sözlüğünden al
                     if "lfs" in node and isinstance(node["lfs"], dict):
                         size_bytes = node["lfs"].get("size", size_bytes)
                     size_gb = round(size_bytes / (1024 ** 3), 2) if size_bytes > 0 else 0.0
@@ -149,10 +150,10 @@ class HFFilesWorker(QThread):
 
 
 class DownloadWorker(QThread):
-    progress = pyqtSignal(str, int, float, float, float) # task_id, pct, dl_mb, total_mb, speed_mb_s
-    status_changed = pyqtSignal(str, str) # task_id, status_str
-    finished_dl = pyqtSignal(str, str) # task_id, dest_path
-    error = pyqtSignal(str, str) # task_id, err_msg
+    progress = pyqtSignal(str, int, float, float, float)
+    status_changed = pyqtSignal(str, str)
+    finished_dl = pyqtSignal(str, str)
+    error = pyqtSignal(str, str)
 
     def __init__(self, task_id, url, dest_path, token=""):
         super().__init__()
