@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 **🚀 Tray-AI**  
 A highly advanced GGUF Large Language Model (LLM) runner and server that runs quietly in your Linux system tray, bringing massive capabilities into a minimalist control window.  
 Tray-AI is designed as a lightweight, performance-oriented, and distraction-free alternative to heavy tools like LM Studio on Linux.  
