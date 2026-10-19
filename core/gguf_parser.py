@@ -25,12 +25,10 @@ def extract_scalar(field):
     return val
 
 def detect_publisher(file_path, all_kv, general_name):
-    """Modelin dağıtıcısını / üreticisini (unsloth, bartowski vb.) tespit eder."""
     for key in ["general.organization", "general.author", "general.base_model.author"]:
         if key in all_kv and str(all_kv[key]).strip():
             return str(all_kv[key]).strip()
 
-    # Dosya yolu ve adından tespit
     path_low = file_path.lower()
     known_publishers = [
         "unsloth", "bartowski", "thebloke", "mradermacher", 
@@ -57,17 +55,23 @@ def analyze_gguf_file(file_path):
         "quant": "Bilinmiyor",
         "publisher": "Bilinmiyor",
         "max_context": 4096,
+        "base_context": 4096,
         "total_layers": 32,
         "has_mtp": False,
         "mtp_layers": 0,
+        "has_yarn": False,
         "has_thinking": False,
         "has_tools": False,
         "has_vision": False,
+        "recommended_temp": 0.70,
+        "recommended_topp": 0.90,
         "extra_meta": {
             "general_name": "",
             "rope_freq_base": 10000.0,
             "rope_scale": 1.0,
             "rope_scaling_type": "none",
+            "yarn_orig_ctx": 4096,
+            "yarn_ext_factor": 1.0,
             "embed_length": 4096,
             "feed_forward_length": 11008,
             "head_count": 32,
@@ -111,6 +115,7 @@ def analyze_gguf_file(file_path):
                 info["extra_meta"]["general_name"] = str(val)
             elif k_low.endswith(".context_length") and isinstance(val, (int, float)):
                 info["max_context"] = int(val)
+                info["base_context"] = int(val)
             elif k_low.endswith(".block_count") and isinstance(val, (int, float)):
                 info["total_layers"] = int(val)
             elif k_low.endswith(".rope.freq_base") and isinstance(val, (int, float)):
@@ -118,7 +123,12 @@ def analyze_gguf_file(file_path):
             elif (k_low.endswith(".rope.scale_linear") or k_low.endswith(".rope.scaling.factor")) and isinstance(val, (int, float)):
                 info["extra_meta"]["rope_scale"] = float(val)
             elif k_low.endswith(".rope.scaling.type") and val:
-                info["extra_meta"]["rope_scaling_type"] = str(val)
+                info["extra_meta"]["rope_scaling_type"] = str(val).lower()
+                if "yarn" in str(val).lower():
+                    info["has_yarn"] = True
+            elif k_low.endswith(".rope.scaling.original_context_length") and isinstance(val, (int, float)):
+                info["extra_meta"]["yarn_orig_ctx"] = int(val)
+                info["has_yarn"] = True
             elif k_low.endswith(".embedding_length") and isinstance(val, (int, float)):
                 info["extra_meta"]["embed_length"] = int(val)
             elif k_low.endswith(".feed_forward_length") and isinstance(val, (int, float)):
@@ -135,10 +145,14 @@ def analyze_gguf_file(file_path):
                 info["extra_meta"]["expert_count"] = int(val)
             elif k_low.endswith(".expert_used_count") and isinstance(val, (int, float)):
                 info["extra_meta"]["expert_used_count"] = int(val)
-            elif k_low == "tokenizer.ggml.bos_token_id" and isinstance(val, (int, float)):
-                info["extra_meta"]["bos_token_id"] = int(val)
-            elif k_low == "tokenizer.ggml.eos_token_id" and isinstance(val, (int, float)):
-                info["extra_meta"]["eos_token_id"] = int(val)
+            elif "mtp_depth" in k_low or "speculative_layers" in k_low:
+                if isinstance(val, (int, float)) and val > 0:
+                    info["has_mtp"] = True
+                    info["mtp_layers"] = int(val)
+            elif k_low.endswith("temperature") and isinstance(val, (int, float)):
+                info["recommended_temp"] = float(val)
+            elif k_low.endswith("top_p") and isinstance(val, (int, float)):
+                info["recommended_topp"] = float(val)
             elif k_low == "tokenizer.chat_template" and val:
                 raw_tpl = str(val)
                 info["extra_meta"]["chat_template"] = raw_tpl[:4000]
@@ -158,8 +172,7 @@ def analyze_gguf_file(file_path):
             info["extra_meta"]["key_length"] = emb // hc
             info["extra_meta"]["value_length"] = emb // hc
 
-        # MTP (Multi-Token Prediction) Katı Doğrulama
-        # Sadece tensör adlarında gerçek nextn/mtp projeksiyonları varsa kabul edilir!
+        # Tensörlerden MTP kontrolü
         mtp_tensors = 0
         for t in reader.tensors:
             tname = t.name.lower()
@@ -168,11 +181,14 @@ def analyze_gguf_file(file_path):
             if "mmproj" in tname or "vision" in tname:
                 info["has_vision"] = True
 
-        if mtp_tensors >= 2:
+        if mtp_tensors >= 1:
             info["has_mtp"] = True
-            info["mtp_layers"] = max(1, mtp_tensors // 2)
-        else:
-            info["has_mtp"] = False
+            if info["mtp_layers"] == 0:
+                info["mtp_layers"] = max(1, mtp_tensors // 2 or 1)
+
+        # YaRN ile genişletilmiş bağlam tespiti
+        if info["extra_meta"]["rope_scale"] > 1.0:
+            info["has_yarn"] = True
 
         fn_up = info["filename"].upper()
         for q in ["Q8_0", "Q6_K_L", "Q6_K", "Q5_K_L", "Q5_K_M", "Q5_K_S", "Q4_K_L", "Q4_K_M", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q3_K_L", "Q3_K_M", "IQ3_M", "Q2_K", "BF16", "F16"]:

@@ -1425,6 +1425,7 @@ class TrayAIApp(QMainWindow):
         grid_as.addWidget(QLabel("RoPE Scaling:"), 3, 0)
         self.cb_rope_scaling = QComboBox()
         self.cb_rope_scaling.addItems(["Auto (Varsayılan)", "none", "linear", "yarn"])
+        self.cb_rope_scaling.currentIndexChanged.connect(self.on_rope_scaling_changed)
         grid_as.addWidget(self.cb_rope_scaling, 3, 1)
 
         grid_as.addWidget(QLabel("YaRN Ext Factor:"), 3, 2)
@@ -2147,6 +2148,23 @@ class TrayAIApp(QMainWindow):
         item = QListWidgetItem(txt)
         item.setData(Qt.ItemDataRole.UserRole, info["path"])
         self.list_models.addItem(item)
+    def on_rope_scaling_changed(self):
+        if not self.active_model_info:
+            return
+        scaling_type = self.cb_rope_scaling.currentText()
+        base_ctx = self.active_model_info.get("base_context", self.active_model_info.get("max_context", 4096))
+        scale = self.spin_rope_scale.value()
+
+        if scaling_type in ("yarn", "linear") and scale > 1.0:
+            target_max = int(base_ctx * scale)
+        elif scaling_type == "yarn":
+            target_max = max(base_ctx * 4, 1048576)
+        else:
+            target_max = base_ctx
+
+        self.slider_ctx.setRange(512, target_max)
+        self.spin_ctx.setRange(512, target_max)
+        self.recalculate_memory_estimate()
 
     def on_model_selected(self, item):
         path = item.data(Qt.ItemDataRole.UserRole)
@@ -2160,24 +2178,76 @@ class TrayAIApp(QMainWindow):
 
         self.lbl_model_meta_summary.setText(
             f"<b>Model:</b> {info['filename']} | <b>Arch:</b> {info['arch']} | "
-            f"<b>Layers:</b> {info['total_layers']} | <b>Max Ctx:</b> {info['max_context']} | "
+            f"<b>Layers:</b> {info['total_layers']} | <b>Base Ctx:</b> {info.get('base_context', info['max_context'])} | "
             f"<b>Embed:</b> {extra_m.get('embed_length', 0)} | <b>KV Heads:</b> {extra_m.get('head_count_kv', 0)}"
-            )
+        )
 
         layers = info.get("total_layers", 32)
         self.slider_ngl.setRange(0, layers)
         self.spin_ngl.setRange(0, layers)
 
-        max_ctx = info.get("max_context", 4096)
-        self.slider_ctx.setRange(512, max_ctx)
-        self.spin_ctx.setRange(512, max_ctx)
+        base_ctx = info.get("base_context", info.get("max_context", 4096))
+        rope_scale = float(extra_m.get("rope_scale", 1.0))
+        rope_type = extra_m.get("rope_scaling_type", "none")
 
-        # Kayıtlı model özel ayarı varsa yükle, yoksa metadata varsayılanlarını koy
+        if rope_scale > 1.0 or "yarn" in rope_type or info.get("has_yarn"):
+            max_effective_ctx = max(int(base_ctx * max(rope_scale, 4.0)), 1048576)
+            self.cb_rope_scaling.setCurrentText("yarn" if "yarn" in rope_type else "linear")
+        else:
+            max_effective_ctx = base_ctx
+            self.cb_rope_scaling.setCurrentText("Auto (Varsayılan)")
+
+        self.slider_ctx.setRange(512, max_effective_ctx)
+        self.spin_ctx.setRange(512, max_effective_ctx)
+
         saved_m_cfg = self.cfg.get("per_model_cfg", {}).get(path, {})
         self.slider_ngl.setValue(min(layers, saved_m_cfg.get("ngl", layers)))
-        self.slider_ctx.setValue(min(max_ctx, saved_m_cfg.get("ctx", max_ctx)))
+        self.slider_ctx.setValue(min(max_effective_ctx, saved_m_cfg.get("ctx", base_ctx)))
 
         self.spin_rope_base.setValue(float(extra_m.get("rope_freq_base", 10000.0)))
+        self.spin_rope_scale.setValue(rope_scale)
+
+        # Akıllı Sıcaklık ve Top-P Ataması
+        m_name_low = info.get("filename", "").lower()
+        if "recommended_temp" in info and info["recommended_temp"] != 0.70:
+            target_temp = info["recommended_temp"]
+        elif info.get("has_thinking", False) or any(k in m_name_low for k in ["r1", "qwq", "reasoning"]):
+            target_temp = 0.60  # Akıl yürütme modelleri için optimum
+        elif any(k in m_name_low for k in ["coder", "code", "dev"]):
+            target_temp = 0.20  # Kod modelleri için sıkı mantık
+        else:
+            target_temp = 0.70  # Standart genel modeller
+
+        self.spin_temp.setValue(target_temp)
+        if "recommended_topp" in info:
+            self.spin_topp.setValue(info["recommended_topp"])
+        else:
+            self.spin_topp.setValue(0.95 if target_temp <= 0.60 else 0.90)
+
+        has_real_mtp = info.get("has_mtp", False)
+        if has_real_mtp:
+            mtp_l = info.get("mtp_layers", 1)
+            self.chk_mtp.setEnabled(True)
+            self.chk_mtp.setChecked(True)
+            self.chk_mtp.setText(f"MTP ({mtp_l} Katman Spekülatif Tahmin) Aktif")
+            self.chk_enable_draft.setChecked(False)
+            self.chk_enable_draft.setEnabled(False)
+            self.chk_enable_draft.setToolTip("Model dahili MTP barındırdığı için harici draft model gereksizdir.")
+        else:
+            self.chk_mtp.setEnabled(False)
+            self.chk_mtp.setChecked(False)
+            self.chk_mtp.setText("Modelde MTP Desteği Yok (Devre Dışı)")
+            self.chk_enable_draft.setEnabled(True)
+            self.chk_enable_draft.setToolTip("Modelde dahili MTP yok. İsterseniz harici küçük bir draft model bağlayabilirsiniz.")
+
+        if info.get("has_thinking", False):
+            self.cb_thinking_effort.setEnabled(True)
+            self.cb_thinking_effort.setCurrentIndex(2)
+        else:
+            self.cb_thinking_effort.setEnabled(False)
+            self.cb_thinking_effort.setCurrentIndex(0)
+            self.spin_thinking_tokens.setEnabled(False)
+
         self.recalculate_memory_estimate()
         self.spin_rope_scale.setValue(float(extra_m.get("rope_scale", 1.0)))
 
