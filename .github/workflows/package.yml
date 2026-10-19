@@ -3,7 +3,7 @@ name: Tray-AI Otomatik Linux Paketleyici
 on:
   release:
     types: [published]
-  workflow_dispatch: # Test için GitHub web panelinden elle tetikleme imkanı
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ jobs:
     - name: 1. Kodları Çek
       uses: actions/checkout@v4
 
-    - name: 2. Python ve Sistem Derleme Bağımlılıklarını Kur
+    - name: 2. Python Kur
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
@@ -25,7 +25,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
-                                libvulkan-dev vulkan-tools glslc libcurl4-openssl-dev
+                                libvulkan-dev vulkan-tools glslang-tools libcurl4-openssl-dev
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
         pip install pyinstaller
@@ -37,11 +37,9 @@ jobs:
         rm -rf /tmp/llama-build
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama-build
         cd /tmp/llama-build
-        # Tüm x86_64 işlemcilerde çökmeden çalışması için NATIVE=OFF, AVX2=ON ve VULKAN=ON kullanılır
         cmake -B build -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=ON -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_VULKAN=ON
         cmake --build build --config Release --target llama-server -j$(nproc)
         
-        # Proje dizinindeki engines klasörüne kopyala
         cd ${{ github.workspace }}
         mkdir -p engines
         cp -f /tmp/llama-build/build/bin/llama-server engines/llama-server
@@ -49,7 +47,7 @@ jobs:
         chmod +x engines/*
         rm -rf /tmp/llama-build
 
-    - name: 5. PyInstaller ile Tek Klasör / Bağımsız Paket Üret
+    - name: 5. PyInstaller ile Bağımsız Paket Üret
       run: |
         pyinstaller --noconfirm --onedir --windowed \
           --name "tray-ai" \
@@ -59,19 +57,16 @@ jobs:
           --add-data "engines:engines" \
           main.py
 
-    - name: 6. Deb ve Rpm Paketlerini Üret (FPM ile Hazır Gömülü Motor ve Menü Simgesi)
+    - name: 6. Deb ve Rpm Paketlerini Üret
       run: |
-        # Paket Kök Ağacı
         mkdir -p package_root/opt/tray-ai
         mkdir -p package_root/usr/bin
         mkdir -p package_root/usr/share/applications
         mkdir -p package_root/usr/share/icons/hicolor/scalable/apps
 
-        # PyInstaller dosyalarını ve hazır derlenen engines/ dizinini /opt/tray-ai içine yerleştir
         cp -r dist/tray-ai/* package_root/opt/tray-ai/
         ln -s /opt/tray-ai/tray-ai package_root/usr/bin/tray-ai
 
-        # Simge ve Masaüstü Kısayolunu ekle
         if [ -f assets/tray-ai.svg ]; then
           cp assets/tray-ai.svg package_root/usr/share/icons/hicolor/scalable/apps/tray-ai.svg
         fi
@@ -90,18 +85,15 @@ jobs:
         StartupNotify=false
         EOF
 
-        # Sürüm belirleme (Release tag yoksa varsayılan 1.0.0 al)
         RAW_VER="${{ github.event.release.tag_name }}"
         VERSION="${RAW_VER#v}"
-        if [ -z "$VERSION" ]; then VERSION="1.0.0"; fi
+        if [ -z "$VERSION" ]; then VERSION="1.0.1"; fi
 
-        # DEB Paketi Üret (Bağımlılıklar: libxcb-cursor0, libvulkan1)
         fpm -s dir -t deb -n tray-ai -v "$VERSION" \
           --description "Tray AI: Local GGUF LLM Server in System Tray" \
           --depends libxcb-cursor0 --depends libvulkan1 \
           -C package_root -p "tray-ai_${VERSION}_amd64.deb" .
 
-        # RPM Paketi Üret (Bağımlılıklar: xcb-util-cursor, vulkan-loader)
         fpm -s dir -t rpm -n tray-ai -v "$VERSION" \
           --description "Tray AI: Local GGUF LLM Server in System Tray" \
           --depends xcb-util-cursor --depends vulkan-loader \
