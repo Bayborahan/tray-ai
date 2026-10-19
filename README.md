@@ -1,18 +1,21 @@
 # 🚀 Tray-AI
 
-A highly advanced GGUF Large Language Model (LLM) runner and server that runs quietly in your Linux system tray, bringing massive capabilities into a minimalist control window.
+A high-performance, lightweight GGUF Large Language Model (LLM) runner and server that operates quietly in your Linux system tray, packing comprehensive control into a sleek, minimalist interface.
 
-Tray-AI is designed as a lightweight, performance-oriented, and distraction-free alternative to heavy tools like LM Studio on Linux.
+Tray-AI is designed as an ultra-fast, performance-oriented, and distraction-free native Linux alternative to resource-heavy Electron tools like LM Studio.
 
-## ✨ Key Features (Including what LM Studio lacks!)
+---
 
-- 📥 **Advanced Model Management:** Search, discover, and download GGUF models directly from Hugging Face with a single click inside the app.
-- 📁 **Flexible Directory Support:** Select any local model folder, and Tray-AI will instantly scan and list all your GGUF models.
-- 🏎️ **Dual-Engine Support:** Choose between the standard **llama.cpp server** or the high-performance **turboquant-llama.cpp server** to run your models according to your hardware needs.
-- 🔄 **In-App Engine Updates:** Easily update your underlying server engines directly from the application interface to get the latest performance tweaks.
-- 🐳 **Lightweight & Minimalist:** Sits quietly in your system tray without desktop clutter, dedicating your RAM, CPU, and GPU resources strictly to the model and server.
-- 🌐 **Local OpenAI-Compatible API:** Spawns an OpenAI-standard API server instantly. Connect it effortlessly to your code editors (VS Code via Continue, Cursor, etc.), web UIs, or third-party apps in seconds.
+## ✨ Key Features (What Makes Tray-AI Stand Out)
 
+- ⚡ **Native Hardware Acceleration (Vulkan & AVX2):** Zero-overhead inference powered directly by official `llama.cpp` server binaries compiled with Vulkan and AVX2/AVX-512 instruction sets.
+- 📡 **Real-Time Live Telemetry:** Uninterrupted token speed tracking (Tokens/sec), prompt processing progress, and live context utilization without artificial UI freezes during Tool/Agent calls.
+- 🧠 **Dynamic Architecture & Metadata Sync:** Automatically detects MTP (Multi-Token Prediction), YaRN context scaling up to 1M tokens, speculative drafting, and optimal sampling temperatures straight from model metadata.
+- 🔧 **Native Remote Tool & MCP Support:** Full Jinja template parsing and special token forwarding (`--jinja`, `--special`) for IDE extensions (Cursor, Continue.dev, Cline, Roo Code) and agentic workflows.
+- 📥 **Integrated Hugging Face Hub:** Discover, search, filter (Trending, Downloads, Likes), and download quantized GGUF models with resume/pause capabilities directly inside the app.
+- 🧹 **One-Click RAM Cache Flush:** Safely clear Linux kernel pagecache and system memory after unloading large models to keep your workstation fresh.
+- 🐳 **Minimalist & Resource Conscious:** Sits unobtrusively in your Linux system tray without desktop clutter, dedicating virtually all CPU, RAM, and VRAM strictly to model inference.
+- 🌐 **OpenAI-Compatible Local API:** Instantly spawns a standards-compliant `/v1` endpoint for seamless integration with any local or network client.
 ## 🛠️ Installation & Quick Start
 
 Tray-AI comes pre-packaged with all its dependencies for a seamless installation. You don't even need Python installed on your system!
@@ -23,12 +26,12 @@ Go to the **[Releases]** page, download the appropriate package for your Linux d
 
 #### For Ubuntu / Debian / Mint (.deb)
 ```bash
-sudo apt install ./tray-ai_1.0.5_amd64.deb
+sudo apt install ./tray-ai_amd64.deb
 ```
 
 #### For Fedora / RHEL / CentOS (.rpm)
 ```bash
-sudo dnf install ./tray-ai-1.0.5-1.x86_64.rpm
+sudo dnf install ./tray-ai_x86_64.rpm
 ```
 
 Once installed, you can launch the app directly from your application menu or by simply typing `tray-ai` in your terminal.
@@ -58,8 +61,9 @@ pip install -r requirements.txt
 3. Launch the application:
 ```bash
 python main.py
-```
 
+```bash
+./run.sh
 
 ## 🚀 How to Use
 1. Launch the application; a dedicated icon will appear in your Linux system tray (top/bottom corner depending on your desktop environment).
@@ -68,4 +72,3 @@ python main.py
 
 ## 📜 License
 This project is licensed under the **MIT License**. See the `LICENSE` file for more details.
->>>>>>> 3f8ad31c091ae9649c2db54b986c79bdfc4dc929
