@@ -21,26 +21,35 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Resmi Vulkan SDK Kur (glslc Dahil)
-      uses: humbletim/setup-vulkan-sdk@v1.2.0
-      with:
-        vulkan-query-version: 1.3.283.0
-        vulkan-components: Vulkan-Headers, Vulkan-Loader, glslc
-
-    - name: 4. Paketleme Araclari ve Bagimliliklar
+    - name: 3. Vulkan SDK ve glslc Kurulumu
       run: |
         sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config libcurl4-openssl-dev
+        sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
+                                libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools
+
+        # glslc'yi resmi LunarG Linux tarball'undan dogrudan al ve PATH'e yerlestir
+        echo ">>> LunarG resmi SDK paketi indiriliyor..."
+        curl -sSL "https://sdk.lunarg.com/sdk/download/1.3.283.0/linux/vulkansdk-linux-x86_64-1.3.283.0.tar.xz" -o /tmp/vulkansdk.tar.xz
+        mkdir -p /tmp/vulkan-sdk
+        tar -xf /tmp/vulkansdk.tar.xz -C /tmp/vulkan-sdk --strip-components=2
+        
+        # Binary ve kutuphaneleri sisteme bagla
+        sudo cp -r /tmp/vulkan-sdk/x86_64/bin/* /usr/local/bin/
+        sudo cp -r /tmp/vulkan-sdk/x86_64/include/* /usr/local/include/
+        sudo cp -r /tmp/vulkan-sdk/x86_64/lib/* /usr/local/lib/
+        sudo ldconfig
+        rm -rf /tmp/vulkansdk.tar.xz /tmp/vulkan-sdk
+
+        # Dogrulama
+        which glslc
+        glslc --version
+
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
         pip install pyinstaller
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        
-        # glslc'nin calistigini dogrula
-        which glslc
-        glslc --version
 
-    - name: 5. llama-server Derle
+    - name: 4. llama-server Derle (Vulkan ve AVX2)
       run: |
         rm -rf /tmp/llama-build
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama-build
@@ -54,7 +63,7 @@ jobs:
         chmod +x engines/*
         rm -rf /tmp/llama-build
 
-    - name: 6. PyInstaller ile Paketle
+    - name: 5. PyInstaller ile Paketle
       run: |
         pyinstaller --noconfirm --onedir --windowed \
           --name "tray-ai" \
@@ -64,7 +73,7 @@ jobs:
           --add-data "engines:engines" \
           main.py
 
-    - name: 7. Deb ve Rpm Paketlerini Olustur
+    - name: 6. Deb ve Rpm Paketlerini Olustur
       run: |
         mkdir -p package_root/opt/tray-ai
         mkdir -p package_root/usr/bin
@@ -93,7 +102,7 @@ jobs:
           --depends xcb-util-cursor --depends vulkan-loader \
           -C package_root -p "tray-ai-${VERSION}.x86_64.rpm" .
 
-    - name: 8. Paketleri Release'e Yukle
+    - name: 7. Paketleri Release'e Yukle
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/')
       with:
