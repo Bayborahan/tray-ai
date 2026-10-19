@@ -132,7 +132,6 @@ class TelemetryPoller(QThread):
         n_decoded = nt.get("n_decoded", s.get("n_decoded", 0))
         n_prompt = s.get("n_prompt_tokens", s.get("n_prompt_tokens_processed", 0))
 
-        # Ctx hesabı: Farklı llama.cpp sürümlerinde n_past veya toplam token alanlarını yakala
         tokens_list = s.get("tokens", [])
         tokens_len = len(tokens_list) if isinstance(tokens_list, list) else 0
         n_past = s.get("n_past", 0)
@@ -170,7 +169,6 @@ class TelemetryPoller(QThread):
                 if n_prompt > 0 and actual_ctx_used > 0:
                     info["prompt_pct"] = min(99, int((actual_ctx_used / n_prompt) * 100))
                 else:
-                    # Süreye bağlı olarak %15'ten %95'e doğru tek seferlik yumuşak asimptotik artış
                     simulated_pct = int(95 * (1.0 - (0.5 ** (elapsed / 2.5))))
                     info["prompt_pct"] = max(10, min(95, simulated_pct))
             else:
@@ -197,16 +195,32 @@ class ServerManager:
         self.process = None
         self.reader_thread = None
 
-    def get_library_env(self, extra_env=None):
+    def get_clean_system_env(self, extra_env=None):
+        """
+        PyInstaller'ın paketlediği eski libstdc++.so.6'nın sistemdeki
+        güncel motoru bozmasını engeller.
+        """
         run_env = os.environ.copy()
-        lib_paths = [self.engines_dir]
-        for root, dirs, _ in os.walk(self.engines_dir):
-            for d in dirs:
-                lib_paths.append(os.path.join(root, d))
-        existing_ld = run_env.get("LD_LIBRARY_PATH", "")
-        if existing_ld:
-            lib_paths.append(existing_ld)
-        run_env["LD_LIBRARY_PATH"] = ":".join(lib_paths)
+
+        # PyInstaller'ın enjekte ettiği LD_LIBRARY_PATH'i temizle
+        orig_ld = run_env.get("LD_LIBRARY_PATH", "")
+        cleaned_paths = []
+        for p in orig_ld.split(":"):
+            if p and "_internal" not in p and "/opt/tray-ai" not in p:
+                cleaned_paths.append(p)
+
+        # Önceliği her zaman motorun kendi klasörüne ve sistem kütüphanelerine ver
+        system_lib_paths = [
+            self.engines_dir,
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib",
+            "/lib/x86_64-linux-gnu",
+            "/lib"
+        ]
+        
+        final_ld = ":".join(system_lib_paths + cleaned_paths)
+        run_env["LD_LIBRARY_PATH"] = final_ld
+
         if extra_env:
             run_env.update(extra_env)
         return run_env
@@ -232,7 +246,7 @@ class ServerManager:
                     found = True
                     break
             if not found:
-                raise FileNotFoundError(f"Motor bulunamadı: {engine_path}\nLütfen Ayarlar (⚙️) -> Runtime & Engines bölümünden motoru indirin veya güncelleyin.")
+                raise FileNotFoundError(f"Motor bulunamadı: {engine_path}")
 
         os.chmod(engine_path, 0o755)
 
@@ -250,7 +264,7 @@ class ServerManager:
         if extra_flags:
             cmd.extend(extra_flags)
 
-        run_env = self.get_library_env(env_vars)
+        run_env = self.get_clean_system_env(env_vars)
 
         self.process = subprocess.Popen(
             cmd,
