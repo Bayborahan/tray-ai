@@ -27,14 +27,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y wget gnupg ca-certificates ruby ruby-dev rubygems build-essential rpm cmake git pkg-config libcurl4-openssl-dev
 
-        # LunarG resmi Vulkan SDK deposunu modern GPG anahtariyla ekle
         wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
         echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg] https://packages.lunarg.com/vulkan jammy main" | sudo tee /etc/apt/sources.list.d/lunarg-vulkan-jammy.list
 
         sudo apt-get update
         sudo apt-get install -y vulkan-sdk
 
-        # glslc'nin kuruldugunu dogrula
         which glslc
         glslc --version
 
@@ -88,11 +86,16 @@ jobs:
         fi
         printf "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Tray AI Server\nComment=Local GGUF LLM Server\nExec=/usr/bin/tray-ai\nIcon=tray-ai\nTerminal=false\nCategories=Development;Utility;\n" > package_root/usr/share/applications/tray-ai.desktop
         
-        VERSION="1.0.0"
-        if [ -n "${{ github.event.release.tag_name }}" ]; then
-          RAW_VER="${{ github.event.release.tag_name }}"
-          VERSION="${RAW_VER#v}"
+        # Etiket adını (v1.2.3 gibi) github.ref_name ile doğrudan alıp başındaki 'v' harfini kırpıyoruz
+        TAG_NAME="${{ github.ref_name }}"
+        VERSION="${TAG_NAME#v}"
+        
+        # Eğer elle workflow_dispatch ile tetiklendiyse veya tag boşsa varsayılana dön
+        if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+          VERSION="1.0.0"
         fi
+
+        echo "Paketleme versiyonu: $VERSION"
 
         fpm -s dir -t deb -n tray-ai -v "$VERSION" \
           --description "Tray AI: Local GGUF LLM Server in System Tray" \
@@ -121,4 +124,3 @@ jobs:
           *.rpm
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

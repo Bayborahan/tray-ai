@@ -130,8 +130,13 @@ class TelemetryPoller(QThread):
             nt = {}
 
         n_decoded = nt.get("n_decoded", s.get("n_decoded", 0))
-        n_past = s.get("n_past", 0)
         n_prompt = s.get("n_prompt_tokens", s.get("n_prompt_tokens_processed", 0))
+
+        # Ctx hesabı: Farklı llama.cpp sürümlerinde n_past veya toplam token alanlarını yakala
+        tokens_list = s.get("tokens", [])
+        tokens_len = len(tokens_list) if isinstance(tokens_list, list) else 0
+        n_past = s.get("n_past", 0)
+        actual_ctx_used = max(n_past, tokens_len, n_prompt + n_decoded)
 
         timings = s.get("timings", {})
         pp_speed = timings.get("prompt_per_second", 0.0)
@@ -144,7 +149,7 @@ class TelemetryPoller(QThread):
             "is_processing": is_proc,
             "state": state,
             "n_ctx": n_ctx,
-            "n_past": n_past,
+            "n_past": actual_ctx_used,
             "n_decoded": n_decoded,
             "n_prompt": n_prompt,
             "prompt_pct": 100,
@@ -160,24 +165,28 @@ class TelemetryPoller(QThread):
 
             elapsed = max(0.1, time.time() - self._gen_start_time)
 
-            if state == 1 or (n_decoded == 0 and n_past == 0):
+            if state == 1 or (n_decoded == 0 and actual_ctx_used <= n_prompt):
                 info["phase"] = "prompt"
-                if n_prompt > 0 and n_past > 0:
-                    info["prompt_pct"] = min(99, int((n_past / n_prompt) * 100))
+                if n_prompt > 0 and actual_ctx_used > 0:
+                    info["prompt_pct"] = min(99, int((actual_ctx_used / n_prompt) * 100))
                 else:
-                    info["prompt_pct"] = min(95, int((elapsed * 35) % 100))
+                    # Süreye bağlı olarak %15'ten %95'e doğru tek seferlik yumuşak asimptotik artış
+                    simulated_pct = int(95 * (1.0 - (0.5 ** (elapsed / 2.5))))
+                    info["prompt_pct"] = max(10, min(95, simulated_pct))
             else:
                 info["phase"] = "eval"
+                info["prompt_pct"] = 100
                 if n_decoded > 0:
                     info["tokens_generated"] = n_decoded
                     if tg_speed <= 0:
                         info["tg_speed"] = round(n_decoded / elapsed, 1)
                 else:
-                    info["tokens_generated"] = n_past
+                    info["tokens_generated"] = actual_ctx_used
         else:
             self._was_generating = False
             info["phase"] = "idle"
-            info["tokens_generated"] = n_decoded if n_decoded > 0 else n_past
+            info["prompt_pct"] = 100
+            info["tokens_generated"] = n_decoded if n_decoded > 0 else actual_ctx_used
 
         self.telemetry_update.emit(info)
 
@@ -209,9 +218,8 @@ class ServerManager:
 
         engine_path = os.path.join(self.engines_dir, engine_name)
         if not os.path.exists(engine_path):
-            # Fallback kontrolü: Proje dizininde veya /opt/tray-ai/engines altında var mı?
             fallback_paths = [
-                os.path.join(BASE_DIR, "engines", engine_name),
+                os.path.join(os.path.expanduser("~/.local/share/tray-ai/engines"), engine_name),
                 os.path.join("/opt/tray-ai/engines", engine_name)
             ]
             found = False
@@ -244,7 +252,6 @@ class ServerManager:
 
         run_env = self.get_library_env(env_vars)
 
-        # start_new_session=True sayesinde alt süreç grubu oluşturulur, kapatılırken RAM anında boşaltılır
         self.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
