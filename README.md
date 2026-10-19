@@ -44,18 +44,50 @@ Tray-AI is designed as a lightweight, performance-oriented, and distraction-free
 
 ## 🛠️ Installation & Quick Start
 
-### 1. Requirements
-Ensure you have Python and the required dependencies installed on your system:
+Tray-AI comes pre-packaged with all its dependencies for a seamless installation. You don't even need Python installed on your system!
+
+### 📦 Option 1: Install via Package Manager (Recommended)
+
+Go to the **[Releases]** page, download the appropriate package for your Linux distribution, and install it:
+
+#### For Ubuntu / Debian / Mint (.deb)
+```bash
+sudo apt install ./tray-ai_1.0.5_amd64.deb
+```
+
+#### For Fedora / RHEL / CentOS (.rpm)
+```bash
+sudo dnf install ./tray-ai-1.0.5-1.x86_64.rpm
+```
+
+Once installed, you can launch the app directly from your application menu or by simply typing `tray-ai` in your terminal.
+
+---
+
+### 🚀 Option 2: Run the Portable Executable
+
+If you don't want to install anything, just download the standalone binary `Tray-AI-Linux-x86_64` from the Releases page, make it executable, and run it:
+
+```bash
+chmod +x Tray-AI-Linux-x86_64
+./Tray-AI-Linux-x86_64
+```
+
+---
+
+### 👨‍💻 Option 3: For Developers (From Source)
+
+If you prefer to run it directly from the source code:
+
+1. Ensure you have Python 3 installed and clone the repository.
+2. Install the required python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-
-### 2. Running the Application
+3. Launch the application:
 ```bash
-python3 main.py
+python main.py
 ```
-
-./run.sh
 
 
 ## 🚀 How to Use
