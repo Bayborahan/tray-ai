@@ -103,9 +103,17 @@ jobs:
           --depends xcb-util-cursor --depends vulkan-loader \
           -C package_root -p "tray-ai-${VERSION}.x86_64.rpm" .
 
-    - name: 7. Paketleri Release'e Yukle
+    - name: 7. Paketleri Actions Yapisi Olarak Sakla (Artifact)
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-packages
+        path: |
+          *.deb
+          *.rpm
+
+    - name: 8. Paketleri Release'e Yukle
       uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
       with:
         files: |
           *.deb
