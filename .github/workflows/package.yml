@@ -27,34 +27,14 @@ jobs:
         sudo apt-get install -y ruby ruby-dev rubygems build-essential rpm cmake git pkg-config \
                                 libvulkan-dev vulkan-tools libcurl4-openssl-dev glslang-tools spirv-tools
 
-        # glslc temini: Google shaderc resmi GitHub release ikilisini yukle
-        echo ">>> glslc kuruluyor..."
-        curl -sSL "https://github.com/google/shaderc/releases/download/v2024.1/glslc-linux-x86_64.tar.gz" -o /tmp/glslc.tar.gz || true
-        
-        if [ -s /tmp/glslc.tar.gz ] && tar -ztf /tmp/glslc.tar.gz >/dev/null 2>&1; then
-          sudo tar -xzf /tmp/glslc.tar.gz -C /usr/local/bin/
-          sudo chmod +x /usr/local/bin/glslc
-        else
-          echo ">>> Alternatif: glslangValidator wrapper glslc olarak olusturuluyor..."
-          sudo bash -c 'cat << "SHIM" > /usr/local/bin/glslc
-#!/usr/bin/env bash
-args=()
-output=""
-for arg in "$@"; do
-  if [ "$arg" == "-o" ]; then
-    args+=("-o")
-  else
-    args+=("$arg")
-  fi
-done
-exec glslangValidator -V "${args[@]}"
-SHIM'
-          sudo chmod +x /usr/local/bin/glslc
-        fi
+        # glslc'yi resmi depodan tek komutla kur
+        curl -sSL "https://github.com/google/shaderc/releases/download/v2024.1/glslc-linux-x86_64.tar.gz" -o /tmp/glslc.tar.gz
+        sudo tar -xzf /tmp/glslc.tar.gz -C /usr/local/bin/
+        sudo chmod +x /usr/local/bin/glslc
+        rm -f /tmp/glslc.tar.gz
 
-        # Dogrulama
         which glslc
-        glslc --version || true
+        glslc --version
 
         sudo gem install --no-document fpm
         python -m pip install --upgrade pip
@@ -81,7 +61,7 @@ SHIM'
         cp -f /tmp/llama-build/build/bin/llama-server engines/llama-server-turboquant
         chmod +x engines/*
         rm -rf /tmp/llama-build
-        echo "✅ Motor basariyla derlendi!"
+        echo "Motor basariyla derlendi!"
 
     - name: 5. PyInstaller ile Paketle
       run: |
