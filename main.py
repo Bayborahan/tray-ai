@@ -1092,31 +1092,18 @@ class TrayAIApp(QMainWindow):
         h_effort = QHBoxLayout()
         self.lbl_effort = QLabel()
         self.cb_thinking_effort = QComboBox()
+        eff_list = self.t('eff_items')
+        if isinstance(eff_list, list):
+            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
+        else:
+            self.cb_thinking_effort.addItems(['Kapalı', 'Düşük (Low)', 'Orta (Medium)', 'Yüksek (High)', 'Özel Bütçe'])
         eff_list = self.t("eff_items", ["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
-        if isinstance(eff_list, list):
-            eff_list = self.t("eff_items")
-        if isinstance(eff_list, list):
-            eff_list = self.t("eff_items")
-        if isinstance(eff_list, list):
-            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
         else:
-            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         else:
-            eff_list = self.t("eff_items")
-        if isinstance(eff_list, list):
-            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
         else:
-            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         else:
-            eff_list = self.t("eff_items")
-        if isinstance(eff_list, list):
-            eff_list = self.t("eff_items")
-        if isinstance(eff_list, list):
-            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
         else:
-            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         else:
-            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         self.cb_thinking_effort.setEnabled(False)
         self.cb_thinking_effort.currentIndexChanged.connect(lambda idx: self.spin_thinking_tokens.setEnabled(idx == 4))
         h_effort.addWidget(self.lbl_effort)
