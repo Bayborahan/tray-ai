@@ -1093,13 +1093,6 @@ class TrayAIApp(QMainWindow):
             self.cb_thinking_effort.addItems([str(x) for x in eff_list])
         else:
             self.cb_thinking_effort.addItems(['Kapalı', 'Düşük (Low)', 'Orta (Medium)', 'Yüksek (High)', 'Özel Bütçe'])
-        eff_list = self.t("eff_items", ["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
-        else:
-        else:
-        else:
-        else:
-        else:
-        else:
         self.cb_thinking_effort.setEnabled(False)
         self.cb_thinking_effort.currentIndexChanged.connect(lambda idx: self.spin_thinking_tokens.setEnabled(idx == 4))
         h_effort.addWidget(self.lbl_effort)
