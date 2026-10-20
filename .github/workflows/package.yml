@@ -65,6 +65,7 @@ jobs:
           --add-data "assets:assets" \
           --add-data "core:core" \
           --add-data "ui:ui" \
+          --add-data "lang:lang" \
           --add-data "engines:engines" \
           main.py
 

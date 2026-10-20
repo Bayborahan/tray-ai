@@ -1,7 +1,20 @@
 import sys
 import os
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
+else:
+    if getattr(sys, 'frozen', False):
+    # PyInstaller onedir modunda dosyalar executable'ın yanındadır, onefile modunda _MEIPASS içindedir
+    BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
+    if not os.path.exists(os.path.join(BASE_DIR, "lang")):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if os.path.exists(os.path.join(exe_dir, "lang")):
+            BASE_DIR = exe_dir
+        elif os.path.exists(os.path.join(exe_dir, "_internal", "lang")):
+            BASE_DIR = os.path.join(exe_dir, "_internal")
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
@@ -477,11 +490,14 @@ class TrayAIApp(QMainWindow):
         sys_loc = QLocale.system().name().lower()
         return "tr" if sys_loc.startswith("tr") else "en"
 
-    def t(self, key):
+    def t(self, key, default=None):
         if not hasattr(self, "_lang_cache") or self._cached_lang != self.current_lang:
             self._lang_cache = load_lang_dict(self.current_lang)
             self._cached_lang = self.current_lang
-        return self._lang_cache.get(key, key)
+        val = self._lang_cache.get(key)
+        if val is None:
+            return default if default is not None else key
+        return val
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 45:
@@ -1076,7 +1092,19 @@ class TrayAIApp(QMainWindow):
         h_effort = QHBoxLayout()
         self.lbl_effort = QLabel()
         self.cb_thinking_effort = QComboBox()
-        self.cb_thinking_effort.addItems(self.t("eff_items"))
+        eff_list = self.t("eff_items", ["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
+        if isinstance(eff_list, list):
+            eff_list = self.t("eff_items")
+        if isinstance(eff_list, list):
+            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
+        else:
+            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"]) for x in eff_list])
+        else:
+            eff_list = self.t("eff_items")
+        if isinstance(eff_list, list):
+            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
+        else:
+            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         self.cb_thinking_effort.setEnabled(False)
         self.cb_thinking_effort.currentIndexChanged.connect(lambda idx: self.spin_thinking_tokens.setEnabled(idx == 4))
         h_effort.addWidget(self.lbl_effort)
