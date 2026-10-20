@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QDoubleSpinBox, QProgressBar, QMessageBox, 
     QScrollArea, QFrame, QGroupBox, QPlainTextEdit, QGridLayout,
     QInputDialog, QStackedWidget, QSplitter, QDialog, QTableWidget, QTableWidgetItem, QHeaderView
-            )
+)
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer, QLocale
 from PyQt6.QtGui import QIcon, QAction, QColor, QPixmap, QCursor, QGuiApplication, QPainter, QBrush
 
@@ -32,7 +32,6 @@ from ui.styles import DARK_STYLE
 USER_ENGINES_DIR = os.path.expanduser("~/.local/share/tray-ai/engines")
 os.makedirs(USER_ENGINES_DIR, exist_ok=True)
 
-# Gömülü gelen motorları (/opt/tray-ai/engines veya proje dizini) kullanıcının yazılabilir alanına aktar
 search_dirs = [
     os.path.join(BASE_DIR, "engines"),
     "/opt/tray-ai/engines"
@@ -54,209 +53,24 @@ CONFIG_DIR = os.path.expanduser("~/.config/tray-ai")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "tray-ai.svg")
 
-# =========================================================================
-# ÇOKLU DİL SÖZLÜĞÜ (TR / EN)
-# =========================================================================
-I18N = {
-    "tr": {
-        "drag_hint": "(Taşımak için sürükleyin)",
-        "srv_wait_model": "● Sunucu Açık (Model Bekleniyor)",
-        "srv_loading": "● Model Yükleniyor...",
-        "srv_ready": "● Model Yüklü & Hazır",
-        "srv_stopped": "● Sunucu Kapalı",
-        "srv_unloaded": "● Sunucu Açık (Model Boşaltıldı)",
-        "srv_error": "● Hata Oluştu",
-        "tab_models": "Modeller",
-        "tab_config": "Model Ayarları",
-        "tab_hw": "Donanım",
-        "tab_server": "Sunucu",
-        "tab_hf": "Hugging Face",
-        "tab_dl": "İndirilenler",
-        "btn_pick_dir": "📁 Klasör Seç",
-        "btn_rescan": "🔄 Yeniden Analiz Et",
-        "lbl_no_folder": "Seçilmedi",
-        "lbl_engine": "<b>Çalıştırma Motoru:</b>",
-        "lbl_no_meta": "Model Seçilmedi — Metadata bekleniyor...",
-        "grp_ctx": "1. Bağlam (Context) & GPU Yük Aktarma",
-        "lbl_ctx": "Bağlam Uzunluğu (-c):",
-        "lbl_ngl": "GPU Yük Aktarma Katmanı (-ngl):",
-        "grp_kv": "2. K Cache / V Cache Nicemleme & Bellek Optimizasyonu",
-        "chk_kv_gpu": "KV Cache GPU'da Tut",
-        "chk_mmap": "mmap() Kullan",
-        "chk_mlock": "mlock() Bellekte Kilitle",
-        "grp_batch": "3. CPU Çekirdek, Parti (Batch) & RoPE Frekans Ayarları",
-        "lbl_parallel": "Paralel İstek Slotu (-np):",
-        "grp_spec": "4. Düşünce Eforu (Reasoning) & Spekülatif Çözme (MTP / Draft)",
-        "lbl_effort": "Düşünce Eforu:",
-        "eff_items": ["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"],
-        "lbl_custom_budget": "Özel Bütçe:",
-        "chk_mtp_ supported": "MTP (Multi-Token Prediction) Katmanlarını Aktif Et (Destekleniyor)",
-        "chk_mtp_none": "Modelde MTP Desteği Yok",
-        "chk_draft": "Draft Model:",
-        "btn_pick_draft": "Model Seç...",
-        "grp_samp": "5. Örnekleyiciler (Temperature, Top-K/P, Min-P, Cezalar, Seed)",
-        "lbl_temp": "Sıcaklık (Temp):",
-        "lbl_seed": "Seed (Tohum):",
-        "hw_cpu_ok": "<b>İşlemci (CPU)</b> <span style='color:#9ece6a;'>✓ Uyumlu</span>",
-        "hw_isa": "Komut Setleri:",
-        "hw_sys_ram": "<b>Sistem RAM:</b>",
-        "hw_tot_vram": "<b>Toplam VRAM:</b>",
-        "hw_gpus": "Algılanan GPU Donanımları",
-        "hw_split": "Çoklu GPU Dağıtım Stratejisi:",
-        "hw_split_items": ["Eşit / Katman Bölme (Layer Split)", "Satır Bölme (Row Split)", "Tek GPU (Yalnızca İlk Aktif Kart)"],
-        "hw_mon": "Canlı Kaynak İzleyici (Resource Monitor)",
-        "srv_mgmt": "Sunucu Servis Yönetimi",
-        "srv_state_on": "🟢 <b>Sunucu Servisi: AKTİF</b>",
-        "srv_state_off": "🔴 <b>Sunucu Servisi: DURDURULDU</b>",
-        "btn_srv_stop": "Sunucuyu Durdur",
-        "btn_srv_start": "Sunucuyu Başlat",
-        "srv_net_grp": "Ağ, IP, Port ve Ajan (MCP/Tool) Konfigürasyonu",
-        "lbl_port": "Sunucu Portu:",
-        "btn_copy_api": "📋 API Adresini Kopyala",
-        "chk_lan": "Yerel Ağda Sun (0.0.0.0 - Ağdaki diğer cihazlar erişebilsin)",
-        "chk_cors": "CORS Başlıklarını Etkinleştir (* - Yerleşik Aktif)",
-        "chk_tools": "Uzak İstemci Araç & Ajan Çağrıları (Jinja / Tool Calling / MCP) Aktif",
-        "srv_logs": "Canlı llama-server Çıktısı & Yükleme Logları",
-        "hf_placeholder": "GGUF Model ara (örn: Qwen3, DeepSeek-R1, Llama-3.3, Gemma-3)...",
-        "btn_search": "🔍 Ara",
-        "btn_hf_trend": "🔥 Trendler",
-        "btn_hf_dl": "⬇️ En Çok İndirilenler",
-        "btn_hf_likes": "⭐ En Beğenilenler",
-        "btn_hf_new": "🆕 En Yeniler",
-        "hf_models_lbl": "Hugging Face GGUF Modelleri (Dosyaları görmek için modele tıklayın):",
-        "hf_files_lbl": "Model İçindeki Quant (.gguf) Dosyaları:",
-        "dl_active_grp": "İndirme Kuyruğu ve Durumu",
-        "dl_empty": "Henüz aktif veya tamamlanmış bir indirme yok.",
-        "tel_waiting": "📡 <b>Uzak İstemci Durumu:</b> İstek Bekleniyor...",
-        "tel_reading": "📖 <b style='color:#7dcfff;'>Gelen Prompt Okunuyor (Prompt Processing)...</b>",
-        "tel_tool": "🔧 <b style='color:#e0af68;'>Uzak İstemci Araç / Ajan İstemi (Tool Call) Çalışıyor...</b>",
-        "tel_gen": "✍️ <b style='color:#bb9af7;'>Uzak İstemciye Cevap Üretiliyor...</b>",
-        "tel_done": "✅ <b style='color:#9ece6a;'>Yanıt Tamamlandı — Yeni İstek Bekleniyor</b>",
-        "btn_abort": "🛑 Üretimi Kes",
-        "lbl_no_model": "Model Durumu: Bellekte model yok",
-        "btn_load": "🚀 MODELİ YÜKLE (LOAD)",
-        "btn_reload": "🔄 YENİDEN YÜKLE (RELOAD)",
-        "btn_unload": "⏹ MODELİ BOŞALT (UNLOAD)",
-        "btn_drop_cache": "🧹 RAM'İ TEMİZLE (DROP CACHE)",
-        "settings_title": "⚙️ <b>Tray AI — Uygulama Ayarları</b>",
-        "btn_back_main": "⬅️ Ana Ekrana Dön",
-        "set_grp_lang": "Dil ve Görünüm (Language & Appearance)",
-        "lbl_ui_lang": "Arayüz Dili:",
-        "lang_auto": "Sistem Diline Göre Otomatik (Auto)",
-        "set_grp_sys": "Sistem Entegrasyonu & Başlangıç",
-        "chk_autostart": "Bilgisayar açıldığında Tray AI'ı sistem tepsisinde otomatik başlat",
-        "btn_install_desktop": "🖥️ Uygulama Menüsüne Simgeyi Yeniden Kaydet (.desktop)",
-        "set_grp_hf": "Hugging Face API Ayarları",
-        "lbl_hf_token": "HF Erişim Tokenı (Gated modeller ve yüksek hız için isteğe bağlı):",
-        "tray_toggle": "Pencereyi Göster / Gizle",
-        "tray_settings": "⚙️ Ayarlar",
-        "tray_exit": "Uygulamadan Çık",
-        "pwd_title": "Sistem Parolası Gerekli (sudo)",
-        "pwd_prompt": "Sistem RAM önbelleğini (pagecache/dentries) tamamen boşaltmak için\nlütfen kullanıcı (sudo) parolanızı girin:",
-        "ram_freed_title": "RAM Önbelleği Temizlendi",
-        "ram_freed_msg": "✅ Sistem RAM önbelleği başarıyla boşaltıldı!\nÖnceki Kullanım: {before} GB\nŞu Anki Kullanım: {after} GB\nKazanılan Net Bellek: {diff} GB",
-        "ram_err_msg": "❌ Parola hatalı veya yetki verilemedi!"
-    },
-    "en": {
-        "drag_hint": "(Drag here to move)",
-        "srv_wait_model": "● Server Active (Waiting for Model)",
-        "srv_loading": "● Loading Model...",
-        "srv_ready": "● Model Loaded & Ready",
-        "srv_stopped": "● Server Stopped",
-        "srv_unloaded": "● Server Active (Model Unloaded)",
-        "srv_error": "● Error Occurred",
-        "tab_models": "Models",
-        "tab_config": "Model Settings",
-        "tab_hw": "Hardware",
-        "tab_server": "Server",
-        "tab_hf": "Hugging Face",
-        "tab_dl": "Downloads",
-        "btn_pick_dir": "📁 Select Folder",
-        "btn_rescan": "🔄 Rescan Models",
-        "lbl_no_folder": "Not Selected",
-        "lbl_engine": "<b>Inference Engine:</b>",
-        "lbl_no_meta": "No Model Selected — Waiting for metadata...",
-        "grp_ctx": "1. Context & GPU Offload",
-        "lbl_ctx": "Context Length (-c):",
-        "lbl_ngl": "GPU Offload Layers (-ngl):",
-        "grp_kv": "2. K Cache / V Cache Quantization & Memory",
-        "chk_kv_gpu": "Offload KV Cache to GPU",
-        "chk_mmap": "Use mmap()",
-        "chk_mlock": "Use mlock() (Keep in RAM)",
-        "grp_batch": "3. CPU Threads, Batch Size & RoPE Frequency",
-        "lbl_parallel": "Parallel Slots (-np):",
-        "grp_spec": "4. Reasoning Effort & Speculative Decoding (MTP / Draft)",
-        "lbl_effort": "Reasoning Effort:",
-        "eff_items": ["Disabled", "Low", "Medium", "High", "Custom Budget"],
-        "lbl_custom_budget": "Custom Budget:",
-        "chk_mtp_ supported": "Enable MTP (Multi-Token Prediction) Layers (Supported)",
-        "chk_mtp_none": "MTP Not Supported by Model",
-        "chk_draft": "Draft Model:",
-        "btn_pick_draft": "Select Model...",
-        "grp_samp": "5. Samplers (Temperature, Top-K/P, Min-P, Penalties, Seed)",
-        "lbl_temp": "Temperature:",
-        "lbl_seed": "Seed:",
-        "hw_cpu_ok": "<b>Processor (CPU)</b> <span style='color:#9ece6a;'>✓ Compatible</span>",
-        "hw_isa": "Instruction Sets:",
-        "hw_sys_ram": "<b>System RAM:</b>",
-        "hw_tot_vram": "<b>Total VRAM:</b>",
-        "hw_gpus": "Detected GPU Hardware",
-        "hw_split": "Multi-GPU Split Strategy:",
-        "hw_split_items": ["Split Evenly / Layer Split", "Row Split", "Single GPU (First Active Device Only)"],
-        "hw_mon": "Live Resource Monitor",
-        "srv_mgmt": "Server Service Management",
-        "srv_state_on": "🟢 <b>Server Service: ACTIVE</b>",
-        "srv_state_off": "🔴 <b>Server Service: STOPPED</b>",
-        "btn_srv_stop": "Stop Server",
-        "btn_srv_start": "Start Server",
-        "srv_net_grp": "Network, IP, Port & Agent (MCP/Tool) Configuration",
-        "lbl_port": "Server Port:",
-        "btn_copy_api": "📋 Copy API URL",
-        "chk_lan": "Expose on Local Network (0.0.0.0 - Allow LAN clients)",
-        "chk_cors": "Enable CORS Headers (* - Built-in Active)",
-        "chk_tools": "Enable Remote Client Tool & Agent Calls (Jinja / Tool Calling / MCP)",
-        "srv_logs": "Live llama-server Output & Loading Logs",
-        "hf_placeholder": "Search GGUF Models (e.g. Qwen3, DeepSeek-R1, Llama-3.3, Gemma-3)...",
-        "btn_search": "🔍 Search",
-        "btn_hf_trend": "🔥 Trending",
-        "btn_hf_dl": "⬇️ Most Downloaded",
-        "btn_hf_likes": "⭐ Most Liked",
-        "btn_hf_new": "🆕 Recently Updated",
-        "hf_models_lbl": "Hugging Face GGUF Models (Click a model to list quant files):",
-        "hf_files_lbl": "Available Quant (.gguf) Files in Repository:",
-        "dl_active_grp": "Download Queue & Status",
-        "dl_empty": "No active or completed downloads yet.",
-        "tel_waiting": "📡 <b>Remote Client Status:</b> Waiting for request...",
-        "tel_reading": "📖 <b style='color:#7dcfff;'>Reading Incoming Prompt (Prompt Processing)...</b>",
-        "tel_tool": "🔧 <b style='color:#e0af68;'>Remote Client Tool / Agent Call Running...</b>",
-        "tel_gen": "✍️ <b style='color:#bb9af7;'>Generating Response to Remote Client...</b>",
-        "tel_done": "✅ <b style='color:#9ece6a;'>Response Completed — Waiting for Next Request</b>",
-        "btn_abort": "🛑 Abort Gen",
-        "lbl_no_model": "Model Status: No model loaded in memory",
-        "btn_load": "🚀 LOAD MODEL",
-        "btn_reload": "🔄 RELOAD MODEL",
-        "btn_unload": "⏹ UNLOAD MODEL",
-        "btn_drop_cache": "🧹 CLEAR RAM (DROP CACHE)",
-        "settings_title": "⚙️ <b>Tray AI — Application Settings</b>",
-        "btn_back_main": "⬅️ Back to Main View",
-        "set_grp_lang": "Language & Appearance",
-        "lbl_ui_lang": "Interface Language:",
-        "lang_auto": "Automatic by System Locale (Auto)",
-        "set_grp_sys": "System Integration & Startup",
-        "chk_autostart": "Automatically start Tray AI in system tray on login",
-        "btn_install_desktop": "🖥️ Re-register Application Menu Icon (.desktop)",
-        "set_grp_hf": "Hugging Face API Settings",
-        "lbl_hf_token": "HF Access Token (Optional, for gated models & higher rate limits):",
-        "tray_toggle": "Show / Hide Window",
-        "tray_settings": "⚙️ Settings",
-        "tray_exit": "Quit Application",
-        "pwd_title": "System Password Required (sudo)",
-        "pwd_prompt": "To completely flush system RAM cache (pagecache/dentries),\nplease enter your sudo password:",
-        "ram_freed_title": "RAM Cache Cleared",
-        "ram_freed_msg": "✅ System RAM cache successfully flushed!\nPrevious Usage: {before} GB\nCurrent Usage: {after} GB\nNet Memory Freed: {diff} GB",
-        "ram_err_msg": "❌ Incorrect password or permission denied!"
-    }
-}
+LANG_DIR = os.path.join(BASE_DIR, "lang")
+
+def load_lang_dict(lang_code):
+    fpath = os.path.join(LANG_DIR, f"{lang_code}.json")
+    if os.path.exists(fpath):
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    fallback_path = os.path.join(LANG_DIR, "en.json")
+    if os.path.exists(fallback_path):
+        try:
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 def load_json(path, default):
     if os.path.exists(path):
@@ -299,21 +113,22 @@ def get_tray_icon(state="ready"):
     return QIcon(pixmap)
 
 
-
 class MetadataInspectorDialog(QDialog):
     def __init__(self, parent, model_info):
         super().__init__(parent)
         self.setWindowTitle(f"🔍 GGUF Metadata & Mimari Müfettişi — {model_info.get('filename', '')}")
-        self.resize(680, 620)
+        self.resize(700, 640)
         self.setStyleSheet(DARK_STYLE)
 
         layout = QVBoxLayout(self)
         extra = model_info.get("extra_meta", {})
 
-        # Üst Özet Kartı
         moe_str = f"{extra.get('expert_used_count', 0)} / {extra.get('expert_count', 0)} Aktif Uzman (MoE)" if extra.get("expert_count", 0) > 0 else "Dense (Standart Yoğun Model)"
+        mtp_str = f"<span style='color:#9ece6a;'>✓ Var ({model_info.get('mtp_layers', 1)} Katman - {extra.get('mtp_reason', 'Aktif')})</span>" if model_info.get("has_mtp") else "<span style='color:#f7768e;'>Yok</span>"
+        yarn_str = f"<span style='color:#9ece6a;'>✓ Destekleniyor ({extra.get('yarn_reason', 'Aktif')})</span>" if model_info.get("has_yarn") else "Standart RoPE"
+
         summary = QLabel(
-            f"<b>Model Adı:</b> {extra.get('general_name') or model_info['filename']}<br>"
+            f"<b>Model Adı:</b> {extra.get('general_name') or model_info['filename']}  |  <b>Yayıncı:</b> {model_info.get('publisher', 'Bilinmiyor')}<br>"
             f"<b>Mimari:</b> <span style='color:#7dcfff;'>{model_info['arch'].upper()}</span>  |  "
             f"<b>Tip:</b> <span style='color:#bb9af7;'>{moe_str}</span>  |  "
             f"<b>Tensor Sayısı:</b> {extra.get('tensor_count', 0)}<br>"
@@ -322,20 +137,21 @@ class MetadataInspectorDialog(QDialog):
             f"<b>FFN Boyutu:</b> {extra.get('feed_forward_length', 0)}<br>"
             f"<b>Attention Heads (Q / KV):</b> {extra.get('head_count', 0)} / {extra.get('head_count_kv', 0)}  |  "
             f"<b>Head Boyutu (K/V):</b> {extra.get('key_length', 128)} / {extra.get('value_length', 128)}<br>"
-            f"<b>RoPE Base / Scale:</b> {extra.get('rope_freq_base', 10000)} / {extra.get('rope_scale', 1.0)} ({extra.get('rope_scaling_type', 'none')})  |  "
-            f"<b>BOS / EOS Token ID:</b> {extra.get('bos_token_id', -1)} / {extra.get('eos_token_id', -1)}"
-            )
+            f"<b>RoPE Base / Scale:</b> {extra.get('rope_freq_base', 10000):,.1f} / {extra.get('rope_scale', 1.0)} ({extra.get('rope_scaling_type', 'none')})<br>"
+            f"<b>MTP (Multi-Token):</b> {mtp_str}  |  <b>YaRN / Uzun Bağlam:</b> {yarn_str}<br>"
+            f"<b>Önerilen Sampler ({extra.get('sampler_source', 'Profil')}):</b> "
+            f"<span style='color:#e0af68;'>Temp: {model_info.get('recommended_temp', 0.7)} | Top-P: {model_info.get('recommended_topp', 0.9)} | Min-P: {model_info.get('recommended_minp', 0.05)} | Top-K: {model_info.get('recommended_top_k', 40)}</span>"
+        )
         summary.setWordWrap(True)
         summary.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; padding: 10px; border-radius: 6px; font-size: 12px;")
         layout.addWidget(summary)
 
         tabs = QTabWidget()
         
-        # Sekme 1: Tüm GGUF Anahtar-Değer Tablosu
         tab_kv = QWidget()
         v_kv = QVBoxLayout(tab_kv)
         search_input = QLineEdit()
-        search_input.setPlaceholderText("🔎 Metadata anahtarı veya değeri ara (örn: rope, attention, tokenizer)...")
+        search_input.setPlaceholderText("🔎 Metadata anahtarı veya değeri ara (örn: rope, mtp, nextn, attention, sampling)...")
         v_kv.addWidget(search_input)
 
         table = QTableWidget()
@@ -360,7 +176,6 @@ class MetadataInspectorDialog(QDialog):
         search_input.textChanged.connect(filter_table)
         tabs.addTab(tab_kv, f"📋 Tüm Metadata Alanları ({len(all_kv)})")
 
-        # Sekme 2: Gömülü Jinja Chat Template
         tab_tpl = QWidget()
         v_tpl = QVBoxLayout(tab_tpl)
         txt_tpl = QPlainTextEdit()
@@ -393,7 +208,9 @@ class FastScannerThread(QThread):
 
         for root, _, files in os.walk(self.folder_path):
             for file in files:
-                if file.lower().endswith(".gguf"):
+                f_low = file.lower()
+                # mmproj dosyalarını bağımsız bir dil modeli gibi listelemeyi engelle
+                if f_low.endswith(".gguf") and not f_low.startswith("mmproj") and "mmproj" not in f_low:
                     full_path = os.path.join(root, file)
                     mtime = os.path.getmtime(full_path)
                     cached = self.cache_mgr.get_model(full_path, mtime)
@@ -475,7 +292,7 @@ class TrayAIApp(QMainWindow):
         super().__init__()
         self.runner_ref = runner_ref
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
-        self.resize(640, 880)
+        self.resize(740, 890)
         self.setStyleSheet(DARK_STYLE)
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
@@ -509,9 +326,6 @@ class TrayAIApp(QMainWindow):
         self.main_layout.setContentsMargins(10, 10, 10, 10)
         self.main_layout.setSpacing(6)
 
-        # =========================================================================
-        # ÜST BAŞLIK ÇUBUĞU (Ayarlar ⚙️ Butonu Dahil)
-        # =========================================================================
         top_bar = QHBoxLayout()
         self.lbl_title = QLabel()
         self.lbl_title.setStyleSheet("font-size: 15px; color: #7aa2f7;")
@@ -534,13 +348,9 @@ class TrayAIApp(QMainWindow):
         top_bar.addWidget(btn_close)
         self.main_layout.addLayout(top_bar)
 
-        # =========================================================================
-        # ANA GÖRÜNÜM İLE AYARLAR GÖRÜNÜMÜ ARASINDA GEÇİŞ (QStackedWidget)
-        # =========================================================================
         self.view_stack = QStackedWidget()
         self.main_layout.addWidget(self.view_stack, 1)
 
-        # Sayfa 0: Ana Sekmeler
         self.tabs = QTabWidget()
         self.view_stack.addWidget(self.tabs)
 
@@ -551,12 +361,8 @@ class TrayAIApp(QMainWindow):
         self.init_tab_hf()
         self.init_tab_downloads()
 
-        # Sayfa 1: Uygulama Ayarları Sayfası
         self.init_settings_page()
 
-        # =========================================================================
-        # CANLI TELEMETRİ PANELİ
-        # =========================================================================
         telemetry_frame = QFrame()
         telemetry_frame.setStyleSheet("background: #1a1b26; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
         v_tel = QVBoxLayout(telemetry_frame)
@@ -566,7 +372,7 @@ class TrayAIApp(QMainWindow):
         h_tel_top = QHBoxLayout()
         self.lbl_tel_phase = QLabel()
         self.lbl_tel_phase.setStyleSheet("color: #a9b1d6; font-size: 12px;")
-        self.lbl_tel_speed = QLabel("⚡ Hız: 0.0 t/s")
+        self.lbl_tel_speed = QLabel(self.t("speed_prefix").format(val="0.0"))
         self.lbl_tel_speed.setStyleSheet("color: #73daca; font-weight: bold; font-size: 12px;")
         
         self.btn_abort_gen = QPushButton("🛑")
@@ -604,9 +410,6 @@ class TrayAIApp(QMainWindow):
 
         self.main_layout.addWidget(telemetry_frame)
 
-        # =========================================================================
-        # ALT MODEL YÜKLEME, BOŞALTMA VE RAM TEMİZLEME PANELİ
-        # =========================================================================
         load_frame = QFrame()
         load_frame.setStyleSheet("background: #16161e; border: 1px solid #292e42; border-radius: 6px; padding: 6px;")
         v_load = QVBoxLayout(load_frame)
@@ -639,7 +442,7 @@ class TrayAIApp(QMainWindow):
         self.btn_drop_cache = QPushButton()
         self.btn_drop_cache.setMinimumHeight(40)
         self.btn_drop_cache.setStyleSheet("background-color: #7aa2f7; color: #15161e; font-size: 11px; font-weight: bold; border-radius: 6px; padding: 6px 8px;")
-        self.btn_drop_cache.setEnabled(False) # Model boşaltıldıktan sonra aktif olur!
+        self.btn_drop_cache.setEnabled(True)
         self.btn_drop_cache.clicked.connect(self.flush_system_ram_cache)
 
         h_btns.addWidget(self.btn_load_model, 3)
@@ -649,7 +452,6 @@ class TrayAIApp(QMainWindow):
 
         self.main_layout.addWidget(load_frame)
 
-        # Kaynak izleyici ve Telemetri
         self.res_timer = QTimer(self)
         self.res_timer.timeout.connect(self.update_resource_monitor)
         self.res_timer.start(2000)
@@ -660,16 +462,13 @@ class TrayAIApp(QMainWindow):
         self.poller.telemetry_update.connect(self.on_live_telemetry)
         self.poller.start()
 
-        # Dil metinlerini uygula
         self.apply_language()
 
-        # Kayıtlı klasörü yükle
         last_dir = self.cfg.get("last_folder", "")
         if last_dir and os.path.isdir(last_dir):
             self.lbl_folder.setText(f".../{os.path.basename(last_dir)}")
             self.load_from_sqlite_instant(last_dir)
 
-        # İlk açılışta Hugging Face Trend Modelleri otomatik listele
         QTimer.singleShot(600, lambda: self.fetch_hf_models(mode="trending"))
 
     def _resolve_language(self, lang_setting):
@@ -679,7 +478,10 @@ class TrayAIApp(QMainWindow):
         return "tr" if sys_loc.startswith("tr") else "en"
 
     def t(self, key):
-        return I18N.get(self.current_lang, I18N["en"]).get(key, key)
+        if not hasattr(self, "_lang_cache") or self._cached_lang != self.current_lang:
+            self._lang_cache = load_lang_dict(self.current_lang)
+            self._cached_lang = self.current_lang
+        return self._lang_cache.get(key, key)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 45:
@@ -694,9 +496,6 @@ class TrayAIApp(QMainWindow):
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
 
-    # =========================================================================
-    # UYGULAMA AYARLARI SAYFASI (Dil, Autostart, HF Token, Simge Kaydı)
-    # =========================================================================
     def init_settings_page(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -715,9 +514,6 @@ class TrayAIApp(QMainWindow):
         top_row.addWidget(self.btn_back_main)
         l.addLayout(top_row)
 
-        # =====================================================================
-        # LM STUDIO TARZI RUNTIME & ENGINES GÜNCELLEME MERKEZİ
-        # =====================================================================
         grp_runtime = QGroupBox("⚡ Runtime & Engines (llama.cpp Motor Yönetimi ve Güncelleme)")
         v_rt = QVBoxLayout(grp_runtime)
         v_rt.setSpacing(8)
@@ -739,13 +535,9 @@ class TrayAIApp(QMainWindow):
         h_rt_top.addWidget(self.btn_check_eng_updates)
         v_rt.addLayout(h_rt_top)
 
-        # TurboQuant frame kaldirildi
-
-        # Motor Kartları
         self.rt_cards_layout = QVBoxLayout()
         v_rt.addLayout(self.rt_cards_layout)
 
-        # Güncelleme İlerleme Çubuğu
         self.lbl_eng_update_status = QLabel("Motor sürüm bilgisi için 'Check for updates' butonuna tıklayın.")
         self.lbl_eng_update_status.setStyleSheet("color: #7dcfff; font-size: 11px;")
         v_rt.addWidget(self.lbl_eng_update_status)
@@ -759,7 +551,6 @@ class TrayAIApp(QMainWindow):
 
         l.addWidget(grp_runtime)
 
-        # 1. Dil Seçimi
         self.grp_set_lang = QGroupBox()
         v_lang = QVBoxLayout(self.grp_set_lang)
         h_lang = QHBoxLayout()
@@ -778,7 +569,6 @@ class TrayAIApp(QMainWindow):
         v_lang.addLayout(h_lang)
         l.addWidget(self.grp_set_lang)
 
-        # 2. Sistem Entegrasyonu (Autostart & .desktop)
         self.grp_set_sys = QGroupBox()
         v_sys = QVBoxLayout(self.grp_set_sys)
         self.chk_autostart = QCheckBox()
@@ -792,7 +582,6 @@ class TrayAIApp(QMainWindow):
         v_sys.addWidget(self.btn_install_desktop)
         l.addWidget(self.grp_set_sys)
 
-        # 3. Hugging Face Token
         self.grp_set_hf = QGroupBox()
         v_hf = QVBoxLayout(self.grp_set_hf)
         self.lbl_hf_token = QLabel()
@@ -809,10 +598,8 @@ class TrayAIApp(QMainWindow):
         scroll.setWidget(page)
         self.view_stack.addWidget(scroll)
 
-        # İlk kartları oluştur ve otomatik kontrol açıksa denetle
         self.populate_runtime_cards({
             "local_main": "Kontrol ediliyor...",
-            "local_turbo": "Kontrol ediliyor...",
             "latest_tag": "...",
             "assets": {},
             "has_vulkan": True,
@@ -821,9 +608,6 @@ class TrayAIApp(QMainWindow):
         })
         if self.cfg.get("auto_update_engine", True):
             QTimer.singleShot(1200, self.check_engine_updates)
-
-    pass
-        # save_json temizlendi
 
     def save_auto_update_pref(self, checked):
         self.cfg["auto_update_engine"] = checked
@@ -842,7 +626,7 @@ class TrayAIApp(QMainWindow):
         self.latest_engine_info = info
         self.lbl_eng_update_status.setText(
             f"✅ Son Resmi Sürüm: {info['latest_tag']} ({info['published_at']})  |  Yerel Motor: {info['local_main']}"
-            )
+        )
         self.populate_runtime_cards(info)
 
     def populate_runtime_cards(self, info):
@@ -859,7 +643,6 @@ class TrayAIApp(QMainWindow):
                 "local_ver": info.get("local_main", ""),
                 "compat": info.get("has_vulkan", True)
             },
-            
             {
                 "key": "cpu",
                 "title": "CPU llama.cpp (Linux)",
@@ -933,7 +716,7 @@ class TrayAIApp(QMainWindow):
             target_type=target_key,
             mode=mode,
             asset_url=asset_url,
-            )
+        )
         self.eng_updater.progress_msg.connect(self.on_eng_update_progress)
         self.eng_updater.finished_ok.connect(self.on_eng_update_finished)
         self.eng_updater.error_occurred.connect(self.on_eng_update_error)
@@ -964,7 +747,11 @@ class TrayAIApp(QMainWindow):
         self.cfg["language"] = lang_code
         save_json(CONFIG_FILE, self.cfg)
         self.current_lang = self._resolve_language(lang_code)
+        if hasattr(self, "_cached_lang"):
+            self._cached_lang = None
         self.apply_language()
+        if hasattr(self, "refresh_model_list_view"):
+            self.refresh_model_list_view()
 
     def toggle_autostart(self, enabled):
         autostart_dir = os.path.expanduser("~/.config/autostart")
@@ -1000,7 +787,7 @@ class TrayAIApp(QMainWindow):
             f"Icon={ICON_PATH}\n"
             "Terminal=false\n"
             "Categories=Development;ArtificialIntelligence;Utility;\n"
-            )
+        )
         with open(desk_file, "w", encoding="utf-8") as f:
             f.write(content)
         os.chmod(desk_file, 0o755)
@@ -1010,13 +797,10 @@ class TrayAIApp(QMainWindow):
         self.cfg["hf_token"] = text.strip()
         save_json(CONFIG_FILE, self.cfg)
 
-    # =========================================================================
-    # RAM ÖNBELLEĞİNİ BOŞALT (sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches)
-    # =========================================================================
     def flush_system_ram_cache(self):
-        # Önce eğer arkada kalmış llama-server süreci varsa temizle
         if self.server_mgr.is_running():
-            self.server_mgr.stop_model()
+            QMessageBox.warning(self, "Tray AI", "Model şu anda bellekte aktif! Lütfen önce modeli boşaltın (UNLOAD).")
+            return
 
         mem_before = round(psutil.virtual_memory().used / (1024**3), 2)
         pwd, ok = QInputDialog.getText(
@@ -1024,12 +808,11 @@ class TrayAIApp(QMainWindow):
             self.t("pwd_title"),
             self.t("pwd_prompt"),
             QLineEdit.EchoMode.Password
-            )
+        )
         if not ok or not pwd:
             return
 
         try:
-            # -k ile sudo önbelleğini sıfırla ki şifreyi kesin olarak stdin'den okusun ve 3'ü drop_caches'e yazsın
             proc = subprocess.run(
                 ["sudo", "-S", "-k", "sh", "-c", "sync && echo 3 > /proc/sys/vm/drop_caches"],
                 input=pwd + "\n",
@@ -1047,7 +830,7 @@ class TrayAIApp(QMainWindow):
                     self,
                     self.t("ram_freed_title"),
                     self.t("ram_freed_msg").format(before=mem_before, after=mem_after, diff=diff)
-            )
+                )
             else:
                 err_detail = (proc.stderr or "").strip()
                 QMessageBox.warning(self, self.t("pwd_title"), f"{self.t('ram_err_msg')}\n\n{err_detail}")
@@ -1056,15 +839,13 @@ class TrayAIApp(QMainWindow):
 
     def abort_current_generation(self):
         if self.server_mgr.is_running() and self.selected_model_path:
-            # llama-server'da aktif üretimi kesmek için hızlı yeniden başlatma veya slot cancel
             self.load_selected_model()
 
-    # =========================================================================
-    # SEKMELERİN KURULUMU
-    # =========================================================================
     def init_tab_models(self):
         tab = QWidget()
         l = QVBoxLayout(tab)
+        l.setSpacing(6)
+
         top_btn = QHBoxLayout()
         self.btn_select_dir = QPushButton()
         self.btn_select_dir.clicked.connect(self.choose_model_folder)
@@ -1080,18 +861,57 @@ class TrayAIApp(QMainWindow):
         self.btn_open_folder.clicked.connect(self.open_model_in_file_manager)
         top_btn.addWidget(self.btn_open_folder)
 
-        self.btn_delete_model = QPushButton("🗑️ Modeli Sil")
+        self.btn_delete_model = QPushButton("🗑️ Sil")
         self.btn_delete_model.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold;")
         self.btn_delete_model.clicked.connect(self.delete_selected_model_file)
         top_btn.addWidget(self.btn_delete_model)
         l.addLayout(top_btn)
 
+        filter_bar = QHBoxLayout()
+        self.input_model_search = QLineEdit()
+        self.input_model_search.setPlaceholderText("🔎 Yerel modellerde ara (isim, mimari, quant)...")
+        self.input_model_search.textChanged.connect(self.refresh_model_list_view)
+        filter_bar.addWidget(self.input_model_search, 2)
+
+        self.cb_model_filter = QComboBox()
+        self.cb_model_filter.addItems([
+            "Tüm Modeller",
+            "⚡ MTP Destekliler",
+            "🧶 YaRN Destekliler",
+            "🧠 Düşünen (Reasoning)",
+            "🔧 Araç / Ajan (Tools)",
+            "🧩 MoE Modeller",
+            "👁️ Görsel (Vision)"
+        ])
+        self.cb_model_filter.currentIndexChanged.connect(self.refresh_model_list_view)
+        filter_bar.addWidget(self.cb_model_filter, 1)
+
+        self.cb_model_sort = QComboBox()
+        self.cb_model_sort.addItems([
+            "İsme Göre (A-Z)",
+            "Boyuta Göre (Küçükten Büyüğe)",
+            "Boyuta Göre (Büyükten Küçüğe)",
+            "Bağlama Göre (Max Ctx)"
+        ])
+        self.cb_model_sort.currentIndexChanged.connect(self.refresh_model_list_view)
+        filter_bar.addWidget(self.cb_model_sort, 1)
+        l.addLayout(filter_bar)
+
+        self.lbl_models_summary = QLabel("Toplam: 0 model")
+        self.lbl_models_summary.setStyleSheet("color: #7aa2f7; font-size: 11px;")
+        l.addWidget(self.lbl_models_summary)
+
         self.list_models = QListWidget()
         self.list_models.setWordWrap(True)
         self.list_models.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_models.itemClicked.connect(self.on_model_selected)
-        l.addWidget(self.list_models)
+        self.list_models.itemDoubleClicked.connect(self.on_model_double_clicked)
+        l.addWidget(self.list_models, 1)
         self.tabs.addTab(tab, "Modeller")
+
+    def on_model_double_clicked(self, item):
+        self.on_model_selected(item)
+        self.load_selected_model()
 
     def init_tab_config(self):
         scroll = QScrollArea()
@@ -1101,14 +921,11 @@ class TrayAIApp(QMainWindow):
         l = QVBoxLayout(tab)
         l.setSpacing(10)
 
-        # Motor kutusu kaldirildi (Varsayilan: llama-server)
-
         self.lbl_model_meta_summary = QLabel()
         self.lbl_model_meta_summary.setWordWrap(True)
         self.lbl_model_meta_summary.setStyleSheet("background: #1f2335; color: #7dcfff; padding: 8px; border-radius: 5px; font-size: 12px;")
         l.addWidget(self.lbl_model_meta_summary)
 
-        # Hızlı Aksiyon Barı: Metadata Müfettişi + Otomatik Donanım Optimizasyonu
         h_quick_actions = QHBoxLayout()
         self.btn_inspect_meta = QPushButton("🔍 GGUF Metadata & Şablon Müfettişi")
         self.btn_inspect_meta.setStyleSheet("background: #3b4261; color: #7dcfff; font-weight: bold;")
@@ -1121,12 +938,11 @@ class TrayAIApp(QMainWindow):
         h_quick_actions.addWidget(self.btn_autotune, 1)
         l.addLayout(h_quick_actions)
 
-        # Canlı Bellek (VRAM + RAM + KV Cache) Tahmincisi Kartı
         mem_est_frame = QFrame()
         mem_est_frame.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
         v_est = QVBoxLayout(mem_est_frame)
         v_est.setContentsMargins(6, 4, 6, 4)
-        self.lbl_mem_estimate = QLabel("💾 <b>Tahmini Bellek Tüketimi:</b> Model seçildiğinde hesaplanır...")
+        self.lbl_mem_estimate = QLabel(self.t("mem_est_initial"))
         self.lbl_mem_estimate.setWordWrap(True)
         self.lbl_mem_estimate.setStyleSheet("font-size: 12px; color: #e0af68;")
         self.bar_mem_estimate = QProgressBar()
@@ -1137,7 +953,6 @@ class TrayAIApp(QMainWindow):
         v_est.addWidget(self.bar_mem_estimate)
         l.addWidget(mem_est_frame)
 
-        # 1. Context ve GPU Offload
         self.grp_ctx = QGroupBox()
         v_ctx = QVBoxLayout(self.grp_ctx)
         h_ctx_top = QHBoxLayout()
@@ -1176,7 +991,6 @@ class TrayAIApp(QMainWindow):
         v_ctx.addWidget(self.slider_ngl)
         l.addWidget(self.grp_ctx)
 
-        # 2. K Cache ve V Cache & Flash Attention
         self.grp_kv = QGroupBox()
         grid_kv = QGridLayout(self.grp_kv)
         grid_kv.addWidget(QLabel("K Cache (-ctk):"), 0, 0)
@@ -1203,7 +1017,6 @@ class TrayAIApp(QMainWindow):
         grid_kv.addWidget(self.chk_mlock, 2, 2, 1, 2)
         l.addWidget(self.grp_kv)
 
-        # 3. CPU Threads, Batch & RoPE
         self.grp_batch = QGroupBox()
         grid_b = QGridLayout(self.grp_batch)
         grid_b.addWidget(QLabel("CPU Threads (-t):"), 0, 0)
@@ -1258,7 +1071,6 @@ class TrayAIApp(QMainWindow):
         grid_b.addWidget(self.spin_rope_scale, 3, 3)
         l.addWidget(self.grp_batch)
 
-        # 4. Düşünce & Spekülatif Çözme
         self.grp_spec = QGroupBox()
         v_spec = QVBoxLayout(self.grp_spec)
         h_effort = QHBoxLayout()
@@ -1280,7 +1092,7 @@ class TrayAIApp(QMainWindow):
         v_spec.addLayout(h_effort)
 
         self.chk_mtp = QCheckBox()
-        self.chk_mtp.setEnabled(False)
+        self.chk_mtp.setEnabled(True)
         v_spec.addWidget(self.chk_mtp)
 
         h_draft = QHBoxLayout()
@@ -1304,7 +1116,6 @@ class TrayAIApp(QMainWindow):
         self.chk_enable_draft.toggled.connect(lambda c: (self.btn_draft_pick.setEnabled(c), self.spin_draft_max.setEnabled(c)))
         l.addWidget(self.grp_spec)
 
-        # 5. Samplers
         self.grp_samp = QGroupBox()
         grid_s = QGridLayout(self.grp_samp)
         self.lbl_temp_title = QLabel()
@@ -1375,7 +1186,6 @@ class TrayAIApp(QMainWindow):
         grid_s.addWidget(self.spin_seed, 4, 3)
         l.addWidget(self.grp_samp)
 
-        # 6. Gelişmiş Yaratıcılık & Tekrar Önleyici Örnekleyiciler (DRY, XTC, Dynatemp, YaRN)
         self.grp_adv_samp = QGroupBox("6. Gelişmiş Samplers (DRY, XTC, Dynamic Temp, YaRN & MoE)")
         grid_as = QGridLayout(self.grp_adv_samp)
 
@@ -1383,8 +1193,7 @@ class TrayAIApp(QMainWindow):
         self.spin_dry_mult = QDoubleSpinBox()
         self.spin_dry_mult.setRange(0.0, 5.0)
         self.spin_dry_mult.setSingleStep(0.1)
-        self.spin_dry_mult.setValue(0.0) # 0.8 önerilir
-        self.spin_dry_mult.setToolTip("Tekrarları önleyen modern DRY çarpanı (Önerilen: 0.8, Kapalı: 0.0)")
+        self.spin_dry_mult.setValue(0.0)
         grid_as.addWidget(self.spin_dry_mult, 0, 1)
 
         grid_as.addWidget(QLabel("DRY Base:"), 0, 2)
@@ -1436,7 +1245,6 @@ class TrayAIApp(QMainWindow):
         grid_as.addWidget(self.spin_yarn_ext, 3, 3)
         l.addWidget(self.grp_adv_samp)
 
-        # 7. Chat Template Override & CLI Komut Önizleme
         self.grp_cli = QGroupBox("7. Chat Template Override & Ekstra CLI Parametreleri")
         v_cli = QVBoxLayout(self.grp_cli)
 
@@ -1458,7 +1266,6 @@ class TrayAIApp(QMainWindow):
         v_cli.addLayout(h_custom_flags)
         l.addWidget(self.grp_cli)
 
-        # Canlı bellek hesaplamasını tetikleyen sinyaller
         self.spin_ctx.valueChanged.connect(self.recalculate_memory_estimate)
         self.spin_ngl.valueChanged.connect(self.recalculate_memory_estimate)
         self.cb_cache_k.currentIndexChanged.connect(self.recalculate_memory_estimate)
@@ -1476,7 +1283,9 @@ class TrayAIApp(QMainWindow):
         l = QVBoxLayout(tab)
         l.setSpacing(10)
 
-        engine_bin = os.path.join(BASE_DIR, "engines", "llama-server")
+        engine_bin = os.path.join(USER_ENGINES_DIR, "llama-server")
+        if not os.path.exists(engine_bin):
+            engine_bin = os.path.join(BASE_DIR, "engines", "llama-server")
         self.hw_info = get_system_hardware(engine_bin)
 
         cpu_card = QFrame()
@@ -1692,9 +1501,6 @@ class TrayAIApp(QMainWindow):
             self.btn_load_model.setEnabled(True)
             tray_ref.setIcon(get_tray_icon("ready"))
 
-    # =========================================================================
-    # HUGGING FACE KEŞİF, TRENDLER VE QUANT DOSYA SEÇİMİ SEKMESİ
-    # =========================================================================
     def init_tab_hf(self):
         tab = QWidget()
         l = QVBoxLayout(tab)
@@ -1817,9 +1623,6 @@ class TrayAIApp(QMainWindow):
             self.list_hf_files.addItem(item)
             self.list_hf_files.setItemWidget(item, row_w)
 
-    # =========================================================================
-    # İNDİRİLENLER SEKMESİ (Duraklatma / Devam / İptal)
-    # =========================================================================
     def init_tab_downloads(self):
         tab = QWidget()
         l = QVBoxLayout(tab)
@@ -1868,7 +1671,6 @@ class TrayAIApp(QMainWindow):
         worker.error.connect(self.on_dl_error)
         worker.start()
 
-        # İndirilenler sekmesine geç
         self.tabs.setCurrentIndex(5)
 
     def on_dl_progress(self, task_id, pct, dl_mb, total_mb, speed_mb):
@@ -1885,7 +1687,6 @@ class TrayAIApp(QMainWindow):
             w.lbl_state.setStyleSheet("color: #9ece6a; font-weight: bold;")
             w.btn_pause.setEnabled(False)
             w.btn_cancel.setEnabled(False)
-        # İnen modeli otomatik analiz edip Modeller sekmesine ekle
         folder = self.cfg.get("last_folder", "")
         if folder and os.path.isdir(folder):
             self.load_from_sqlite_instant(folder)
@@ -1896,9 +1697,6 @@ class TrayAIApp(QMainWindow):
             w.lbl_state.setText(f"❌ Hata: {err_msg}")
             w.lbl_state.setStyleSheet("color: #f7768e;")
 
-    # =========================================================================
-    # DİL UYGULAMA FONKSİYONU
-    # =========================================================================
     def apply_language(self):
         self.lbl_title.setText(f"⚡ <b>Tray AI</b> <span style='font-size:11px; color:#565f89;'>{self.t('drag_hint')}</span>")
         if not self.server_mgr.is_running():
@@ -1918,6 +1716,45 @@ class TrayAIApp(QMainWindow):
         self.tabs.setTabText(3, self.t("tab_server"))
         self.tabs.setTabText(4, self.t("tab_hf"))
         self.tabs.setTabText(5, self.t("tab_dl"))
+
+        if hasattr(self, "btn_open_folder"):
+            self.btn_open_folder.setText(self.t("btn_show_folder"))
+        if hasattr(self, "btn_delete_model"):
+            self.btn_delete_model.setText(self.t("btn_delete"))
+        if hasattr(self, "input_model_search"):
+            self.input_model_search.setPlaceholderText(self.t("search_model_placeholder"))
+        if hasattr(self, "btn_inspect_meta"):
+            self.btn_inspect_meta.setText(self.t("btn_inspect"))
+        if hasattr(self, "btn_autotune"):
+            self.btn_autotune.setText(self.t("btn_autotune"))
+        if hasattr(self, "btn_check_eng_updates"):
+            self.btn_check_eng_updates.setText(self.t("btn_check_eng_updates"))
+        if hasattr(self, "chk_auto_update_eng"):
+            self.chk_auto_update_eng.setText(self.t("chk_auto_update_eng"))
+
+        # Filtre ve Sıralama ComboBox Dillerini Güncelle
+        if hasattr(self, "cb_model_filter"):
+            cur_f = self.cb_model_filter.currentIndex()
+            self.cb_model_filter.blockSignals(True)
+            self.cb_model_filter.clear()
+            self.cb_model_filter.addItems([
+                self.t("filter_all"), self.t("filter_mtp"), self.t("filter_yarn"),
+                self.t("filter_thinking"), self.t("filter_tools"), self.t("filter_moe"),
+                self.t("filter_vision")
+            ])
+            self.cb_model_filter.setCurrentIndex(cur_f if cur_f >= 0 else 0)
+            self.cb_model_filter.blockSignals(False)
+
+        if hasattr(self, "cb_model_sort"):
+            cur_s = self.cb_model_sort.currentIndex()
+            self.cb_model_sort.blockSignals(True)
+            self.cb_model_sort.clear()
+            self.cb_model_sort.addItems([
+                self.t("sort_name"), self.t("sort_size_asc"),
+                self.t("sort_size_desc"), self.t("sort_ctx")
+            ])
+            self.cb_model_sort.setCurrentIndex(cur_s if cur_s >= 0 else 0)
+            self.cb_model_sort.blockSignals(False)
 
         self.btn_select_dir.setText(self.t("btn_pick_dir"))
         self.btn_rescan.setText(self.t("btn_rescan"))
@@ -1979,6 +1816,11 @@ class TrayAIApp(QMainWindow):
         self.lbl_tel_phase.setText(self.t("tel_waiting"))
 
         self.lbl_settings_header.setText(self.t("settings_title"))
+        self.lbl_tel_speed.setText(self.t("speed_prefix").format(val="0.0"))
+        if not self.active_model_info:
+            self.lbl_mem_estimate.setText(self.t("mem_est_initial"))
+        else:
+            self.recalculate_memory_estimate()
         self.btn_back_main.setText(self.t("btn_back_main"))
         self.grp_set_lang.setTitle(self.t("set_grp_lang"))
         self.lbl_ui_lang.setText(self.t("lbl_ui_lang"))
@@ -1991,9 +1833,6 @@ class TrayAIApp(QMainWindow):
         if self.runner_ref:
             self.runner_ref.refresh_menu_labels()
 
-    # =========================================================================
-    # MODEL YÖNETİMİ VE SUNUCU ÇALIŞTIRMA
-    # =========================================================================
     def open_metadata_inspector(self):
         if not self.active_model_info:
             QMessageBox.information(self, "Tray AI", "Lütfen önce Modeller sekmesinden bir model seçin.")
@@ -2011,9 +1850,7 @@ class TrayAIApp(QMainWindow):
         size_gb = info.get("size_gb", 4.0)
         ram_gb = self.hw_info.get("ram_gb", 16.0)
 
-        # Tüm katmanları aktif GPU/iGPU'ya ver
         self.slider_ngl.setValue(layers)
-        # Bellek kapasitesine göre optimum bağlam ve KV cache seç
         if ram_gb >= 64:
             self.slider_ctx.setValue(min(max_ctx, 65536 if size_gb < 35 else 32768))
             self.cb_cache_k.setCurrentText("q8_0")
@@ -2041,17 +1878,27 @@ class TrayAIApp(QMainWindow):
             self.spin_ngl.value(),
             self.cb_cache_k.currentText(),
             self.cb_cache_v.currentText()
-            )
+        )
         sys_ram = max(1.0, self.hw_info.get("ram_gb", 32.0))
         pct = min(100, int((est["total_gb"] / sys_ram) * 100))
         self.bar_mem_estimate.setValue(pct)
 
-        status_icon = "✅ Rahat Sığar" if pct < 75 else ("⚠️ Sınırda" if pct < 92 else "❌ Bellek Yetersiz Olabilir")
+        if pct < 75:
+            status_icon = self.t("status_fits")
+        elif pct < 92:
+            status_icon = self.t("status_borderline")
+        else:
+            status_icon = self.t("status_insufficient")
+
         self.lbl_mem_estimate.setText(
-            f"💾 <b>Tahmini Bellek: {est['total_gb']} GB</b> "
-            f"(Model: {self.active_model_info['size_gb']} GB + KV Cache: {est['kv_gb']} GB)  —  "
-            f"<b>{status_icon} (Sistem: %{pct})</b>"
+            self.t("mem_est_format").format(
+                total=est['total_gb'],
+                model=self.active_model_info['size_gb'],
+                kv=est['kv_gb'],
+                status=status_icon,
+                pct=pct
             )
+        )
 
     def open_model_in_file_manager(self):
         if not self.selected_model_path or not os.path.exists(self.selected_model_path):
@@ -2071,14 +1918,13 @@ class TrayAIApp(QMainWindow):
             "Modeli Silmeyi Onayla",
             f"<b>{m_name}</b> dosyası diskten kalıcı olarak silinecek!\n\nEmin misiniz?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
+        )
         if ans == QMessageBox.StandardButton.Yes:
             if self.server_mgr.is_running():
                 self.unload_current_model()
 
             try:
                 os.remove(self.selected_model_path)
-                # SQLite önbelleğinden sil
                 if hasattr(self, "cache_mgr"):
                     with self.cache_mgr._get_conn() as conn:
                         conn.execute("DELETE FROM models WHERE path = ?", (self.selected_model_path,))
@@ -2121,33 +1967,164 @@ class TrayAIApp(QMainWindow):
         self.loaded_models.clear()
         cached_models = self.cache_mgr.get_all_by_folder(folder)
         for m in cached_models:
-            if os.path.exists(m["path"]):
-                self.add_model_item_to_list(m)
+            p = m["path"]
+            # Sadece var olan ve mmproj olmayan modelleri yükle
+            if os.path.exists(p) and "mmproj" not in os.path.basename(p).lower():
+                self.loaded_models[p] = m
+        self.refresh_model_list_view()
 
         self.scanner_thread = FastScannerThread(folder, self.cache_mgr)
         self.scanner_thread.new_model_found.connect(self.on_bg_model_found)
         self.scanner_thread.start()
 
     def on_bg_model_found(self, info):
-        if info["path"] not in self.loaded_models:
-            self.add_model_item_to_list(info)
+        p = info["path"]
+        if p not in self.loaded_models and "mmproj" not in os.path.basename(p).lower():
+            self.loaded_models[p] = info
+            self.refresh_model_list_view()
 
-    def add_model_item_to_list(self, info):
-        self.loaded_models[info["path"]] = info
+    def refresh_model_list_view(self):
+        self.list_models.clear()
+        search_txt = self.input_model_search.text().strip().lower() if hasattr(self, "input_model_search") else ""
+        filter_idx = self.cb_model_filter.currentIndex() if hasattr(self, "cb_model_filter") else 0
+        sort_idx = self.cb_model_sort.currentIndex() if hasattr(self, "cb_model_sort") else 0
+
+        models = list(self.loaded_models.values())
+
+        filtered = []
+        for info in models:
+            extra = info.get("extra_meta", {})
+            if search_txt:
+                haystack = f"{info['filename']} {info['arch']} {info['quant']} {info.get('publisher', '')}".lower()
+                if search_txt not in haystack:
+                    continue
+            if filter_idx == 1 and not info.get("has_mtp"):
+                continue
+            elif filter_idx == 2 and not info.get("has_yarn"):
+                continue
+            elif filter_idx == 3 and not info.get("has_thinking"):
+                continue
+            elif filter_idx == 4 and not info.get("has_tools"):
+                continue
+            elif filter_idx == 5 and extra.get("expert_count", 0) <= 0:
+                continue
+            elif filter_idx == 6 and not info.get("has_vision"):
+                continue
+            filtered.append(info)
+
+        if sort_idx == 0:
+            filtered.sort(key=lambda x: x["filename"].lower())
+        elif sort_idx == 1:
+            filtered.sort(key=lambda x: x["size_gb"])
+        elif sort_idx == 2:
+            filtered.sort(key=lambda x: x["size_gb"], reverse=True)
+        elif sort_idx == 3:
+            filtered.sort(key=lambda x: x.get("max_context", 0), reverse=True)
+
+        total_gb = round(sum(m["size_gb"] for m in filtered), 2)
+        if hasattr(self, "lbl_models_summary"):
+            self.lbl_models_summary.setText(
+                self.t("models_summary_format").format(
+                    shown=len(filtered),
+                    total=len(models),
+                    size=total_gb
+                )
+            )
+
+        for info in filtered:
+            self._insert_model_widget_item(info)
+
+    def _insert_model_widget_item(self, info):
+        extra = info.get("extra_meta", {})
+        fn = info['filename']
+        quant = info.get('quant', 'GGUF')
+
+        clean_name = fn
+        if clean_name.lower().endswith(".gguf"):
+            clean_name = clean_name[:-5]
+        
+        for q_pattern in [quant, quant.lower(), quant.upper()]:
+            if q_pattern and q_pattern != "Bilinmiyor":
+                clean_name = clean_name.replace(f"-{q_pattern}", "").replace(f"_{q_pattern}", "").replace(f".{q_pattern}", "")
+        clean_name = clean_name.strip("-_ .")
+
         badges = []
         pub = info.get("publisher", "Bilinmiyor")
-        pub_str = f"🏢 {pub}" if pub != "Bilinmiyor" else ""
-        if pub_str: badges.append(pub_str)
-        if info.get("has_thinking"): badges.append("🧠")
-        if info.get("has_tools"): badges.append("🔧")
-        if info.get("has_vision"): badges.append("👁️")
-        if info.get("has_mtp"): badges.append("⚡MTP")
+        if pub != "Bilinmiyor":
+            badges.append(f"🏢 {pub}")
+        if extra.get("expert_count", 0) > 0:
+            badges.append(f"🧩 MoE ({extra.get('expert_used_count', 0)}/{extra.get('expert_count', 0)})")
+        if info.get("has_mtp"):
+            badges.append(f"⚡ MTP ({info.get('mtp_layers', 1)}L)")
+        if info.get("has_yarn"):
+            badges.append("🧶 YaRN")
+        if info.get("has_thinking"):
+            badges.append("🧠 Düşünce")
+        if info.get("has_tools"):
+            badges.append("🔧 Araçlar")
+        if info.get("has_vision"):
+            badges.append("👁️ Görsel")
 
-        badge_str = f" [{' | '.join(badges)}]" if badges else ""
-        txt = f"{info['filename']} ({info['size_gb']} GB)\n↳ {info['arch'].upper()} | Katman: {info['total_layers']} | Ctx: {info['max_context']} | {info['quant']}{badge_str}"
-        item = QListWidgetItem(txt)
+        rec_t = info.get("recommended_temp", 0.70)
+        badges.append(f"🌡️ T:{rec_t:.2f}")
+
+        badge_str = " • ".join(badges)
+        ctx_k = f"{info['max_context'] // 1024}K" if info["max_context"] >= 1024 else str(info["max_context"])
+
+        from PyQt6.QtCore import QSize
+        row_widget = QWidget()
+        row_widget.setStyleSheet("background: transparent;")
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(8, 8, 8, 8)
+        row_layout.setSpacing(5)
+
+        # Üst Satır: Model Adı + [QUANT] + [GGUF] .... Boyut (GB)
+        top_line = QHBoxLayout()
+        top_line.setSpacing(6)
+        top_line.setContentsMargins(0, 0, 0, 0)
+
+        lbl_name = QLabel(f"<b>{clean_name}</b>")
+        lbl_name.setStyleSheet("font-size: 13px; color: #c0caf5; font-weight: bold;")
+        top_line.addWidget(lbl_name)
+
+        lbl_quant = QLabel(f" {quant} ")
+        lbl_quant.setStyleSheet(
+            "background: #2ac3de; color: #15161e; font-weight: bold; font-size: 10px; "
+            "border-radius: 4px; padding: 1px 5px;"
+        )
+        top_line.addWidget(lbl_quant)
+
+        lbl_format = QLabel(" GGUF ")
+        lbl_format.setStyleSheet(
+            "background: #3b4261; color: #7aa2f7; font-weight: bold; font-size: 10px; "
+            "border-radius: 4px; padding: 1px 5px; border: 1px solid #7aa2f7;"
+        )
+        top_line.addWidget(lbl_format)
+        top_line.addStretch()
+
+        lbl_size = QLabel(f"<b>{info['size_gb']} GB</b>")
+        lbl_size.setStyleSheet("color: #73daca; font-size: 11px; font-weight: bold; padding-right: 4px;")
+        top_line.addWidget(lbl_size)
+
+        row_layout.addLayout(top_line)
+
+        # Alt Satır: Mimari tekrarı kaldırıldı, doğrudan Katman ve Ctx ile başlar
+        bottom_str = f"{info['total_layers']} Katman • Ctx: {ctx_k}"
+        if badge_str:
+            bottom_str += f" • {badge_str}"
+
+        lbl_meta = QLabel(bottom_str)
+        lbl_meta.setStyleSheet("color: #9aa5ce; font-size: 11px;")
+        lbl_meta.setWordWrap(False)
+        row_layout.addWidget(lbl_meta)
+
+        item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, info["path"])
+        item.setSizeHint(QSize(row_widget.sizeHint().width(), 64))
+
         self.list_models.addItem(item)
+        self.list_models.setItemWidget(item, row_widget)
+
     def on_rope_scaling_changed(self):
         if not self.active_model_info:
             return
@@ -2157,8 +2134,8 @@ class TrayAIApp(QMainWindow):
 
         if scaling_type in ("yarn", "linear") and scale > 1.0:
             target_max = int(base_ctx * scale)
-        elif scaling_type == "yarn":
-            target_max = max(base_ctx * 4, 1048576)
+        elif scaling_type == "yarn" or self.active_model_info.get("has_yarn"):
+            target_max = max(base_ctx * 4, 262144)
         else:
             target_max = base_ctx
 
@@ -2176,10 +2153,23 @@ class TrayAIApp(QMainWindow):
         self.active_model_info = info
         extra_m = info.get("extra_meta", {})
 
+        mtp_badge = self.t("badge_mtp_active").format(layers=info.get('mtp_layers', 1)) if info.get("has_mtp") else self.t("badge_mtp_none")
+        yarn_badge = self.t("badge_yarn_active") if info.get("has_yarn") else self.t("badge_yarn_none")
+        sampler_src = extra_m.get("sampler_source", "Profil")
+
         self.lbl_model_meta_summary.setText(
-            f"<b>Model:</b> {info['filename']} | <b>Arch:</b> {info['arch']} | "
-            f"<b>Layers:</b> {info['total_layers']} | <b>Base Ctx:</b> {info.get('base_context', info['max_context'])} | "
-            f"<b>Embed:</b> {extra_m.get('embed_length', 0)} | <b>KV Heads:</b> {extra_m.get('head_count_kv', 0)}"
+            self.t("meta_summary_format").format(
+                fn=info['filename'],
+                arch=info['arch'].upper(),
+                layers=info['total_layers'],
+                ctx=f"{info.get('base_context', info['max_context']):,}",
+                mtp=mtp_badge,
+                yarn=yarn_badge,
+                src=sampler_src,
+                temp=info.get('recommended_temp', 0.70),
+                topp=info.get('recommended_topp', 0.90),
+                minp=info.get('recommended_minp', 0.05)
+            )
         )
 
         layers = info.get("total_layers", 32)
@@ -2191,8 +2181,8 @@ class TrayAIApp(QMainWindow):
         rope_type = extra_m.get("rope_scaling_type", "none")
 
         if rope_scale > 1.0 or "yarn" in rope_type or info.get("has_yarn"):
-            max_effective_ctx = max(int(base_ctx * max(rope_scale, 4.0)), 1048576)
-            self.cb_rope_scaling.setCurrentText("yarn" if "yarn" in rope_type else "linear")
+            max_effective_ctx = max(int(base_ctx * max(rope_scale, 4.0)), 262144)
+            self.cb_rope_scaling.setCurrentText("yarn" if ("yarn" in rope_type or info.get("has_yarn")) else "linear")
         else:
             max_effective_ctx = base_ctx
             self.cb_rope_scaling.setCurrentText("Auto (Varsayılan)")
@@ -2207,38 +2197,25 @@ class TrayAIApp(QMainWindow):
         self.spin_rope_base.setValue(float(extra_m.get("rope_freq_base", 10000.0)))
         self.spin_rope_scale.setValue(rope_scale)
 
-        # Akıllı Sıcaklık ve Top-P Ataması
-        m_name_low = info.get("filename", "").lower()
-        if "recommended_temp" in info and info["recommended_temp"] != 0.70:
-            target_temp = info["recommended_temp"]
-        elif info.get("has_thinking", False) or any(k in m_name_low for k in ["r1", "qwq", "reasoning"]):
-            target_temp = 0.60  # Akıl yürütme modelleri için optimum
-        elif any(k in m_name_low for k in ["coder", "code", "dev"]):
-            target_temp = 0.20  # Kod modelleri için sıkı mantık
-        else:
-            target_temp = 0.70  # Standart genel modeller
+        self.spin_temp.setValue(float(info.get("recommended_temp", 0.70)))
+        self.spin_topp.setValue(float(info.get("recommended_topp", 0.90)))
+        self.spin_minp.setValue(float(info.get("recommended_minp", 0.05)))
+        self.spin_topk.setValue(int(info.get("recommended_top_k", 40)))
 
-        self.spin_temp.setValue(target_temp)
-        if "recommended_topp" in info:
-            self.spin_topp.setValue(info["recommended_topp"])
-        else:
-            self.spin_topp.setValue(0.95 if target_temp <= 0.60 else 0.90)
-
-        has_real_mtp = info.get("has_mtp", False)
+        has_real_mtp = bool(info.get("has_mtp", False))
+        self.chk_mtp.setEnabled(True)
         if has_real_mtp:
-            mtp_l = info.get("mtp_layers", 1)
-            self.chk_mtp.setEnabled(True)
+            mtp_l = max(1, int(info.get("mtp_layers", 1)))
+            reason = extra_m.get("mtp_reason", "Algılandı")
             self.chk_mtp.setChecked(True)
-            self.chk_mtp.setText(f"MTP ({mtp_l} Katman Spekülatif Tahmin) Aktif")
+            self.chk_mtp.setText(f"⚡ MTP ({mtp_l} Katman Spekülatif Tahmin) Aktif — [{reason}]")
+            self.chk_mtp.setStyleSheet("color: #9ece6a; font-weight: bold;")
             self.chk_enable_draft.setChecked(False)
-            self.chk_enable_draft.setEnabled(False)
-            self.chk_enable_draft.setToolTip("Model dahili MTP barındırdığı için harici draft model gereksizdir.")
         else:
-            self.chk_mtp.setEnabled(False)
             self.chk_mtp.setChecked(False)
-            self.chk_mtp.setText("Modelde MTP Desteği Yok (Devre Dışı)")
+            self.chk_mtp.setText(self.t("chk_mtp_none"))
+            self.chk_mtp.setStyleSheet("color: #a9b1d6;")
             self.chk_enable_draft.setEnabled(True)
-            self.chk_enable_draft.setToolTip("Modelde dahili MTP yok. İsterseniz harici küçük bir draft model bağlayabilirsiniz.")
 
         if info.get("has_thinking", False):
             self.cb_thinking_effort.setEnabled(True)
@@ -2249,25 +2226,6 @@ class TrayAIApp(QMainWindow):
             self.spin_thinking_tokens.setEnabled(False)
 
         self.recalculate_memory_estimate()
-        self.spin_rope_scale.setValue(float(extra_m.get("rope_scale", 1.0)))
-
-        has_real_mtp = info.get("has_mtp", False) and info.get("mtp_layers", 0) > 0
-        if has_real_mtp:
-            self.chk_mtp.setEnabled(True)
-            self.chk_mtp.setChecked(True)
-            self.chk_mtp.setText(f"MTP ({info.get('mtp_layers', 1)} Katman Spekülatif Tahmin) Aktif")
-        else:
-            self.chk_mtp.setEnabled(False)
-            self.chk_mtp.setChecked(False)
-            self.chk_mtp.setText("Modelde MTP Desteği Yok (Devre Dışı)")
-
-        if info.get("has_thinking", False):
-            self.cb_thinking_effort.setEnabled(True)
-            self.cb_thinking_effort.setCurrentIndex(2)
-        else:
-            self.cb_thinking_effort.setEnabled(False)
-            self.cb_thinking_effort.setCurrentIndex(0)
-            self.spin_thinking_tokens.setEnabled(False)
 
     def load_selected_model(self):
         if not self.server_service_enabled:
@@ -2281,7 +2239,6 @@ class TrayAIApp(QMainWindow):
         port = self.spin_port.value()
         host = "0.0.0.0" if self.chk_lan.isChecked() else "127.0.0.1"
 
-        # Model başına ayarları kaydet
         if "per_model_cfg" not in self.cfg:
             self.cfg["per_model_cfg"] = {}
         self.cfg["per_model_cfg"][self.selected_model_path] = {"ngl": ngl, "ctx": ctx}
@@ -2321,7 +2278,6 @@ class TrayAIApp(QMainWindow):
         if self.chk_mlock.isChecked(): extra.append("--mlock")
         if not self.chk_offload_kv.isChecked(): extra.append("-nkvo")
 
-        # Uzak İstemci Araç & Ajan (Tool Calling / MCP) Tam Desteği
         if self.chk_tools.isChecked():
             extra.append("--jinja")
             extra.append("--special")
@@ -2351,7 +2307,6 @@ class TrayAIApp(QMainWindow):
             elif eff_idx == 4:
                 extra.extend(["--reasoning-budget", str(self.spin_thinking_tokens.value())])
 
-        # Gelişmiş Samplers (DRY, XTC, Dynatemp, Typical-P, RoPE Scaling)
         if self.spin_dry_mult.value() > 0.0:
             extra.extend(["--dry-multiplier", f"{self.spin_dry_mult.value():.2f}", "--dry-base", f"{self.spin_dry_base.value():.2f}"])
         if self.spin_xtc_prob.value() > 0.0:
@@ -2373,8 +2328,21 @@ class TrayAIApp(QMainWindow):
         if custom_f:
             extra.extend(custom_f.split())
 
-        # MTP Destekli Modellerde Spekülatif Kod Çözme Parametreleri
-        if self.chk_mtp.isEnabled() and self.chk_mtp.isChecked():
+        # Otomatik mmproj (Vision Adaptör) Tespiti ve Entegrasyonu
+        model_dir = os.path.dirname(self.selected_model_path)
+        mmproj_path = None
+        try:
+            for cand in os.listdir(model_dir):
+                if "mmproj" in cand.lower() and cand.lower().endswith(".gguf"):
+                    mmproj_path = os.path.join(model_dir, cand)
+                    break
+        except Exception:
+            pass
+
+        if mmproj_path and os.path.exists(mmproj_path):
+            extra.extend(["--mmproj", mmproj_path])
+
+        if self.chk_mtp.isChecked():
             extra.extend(["--draft-max", "2", "--draft-min", "1"])
 
         if self.chk_enable_draft.isChecked() and self.selected_draft_path:
@@ -2412,6 +2380,7 @@ class TrayAIApp(QMainWindow):
             self.btn_unload_model.setEnabled(True)
             self.btn_load_model.setText(self.t("btn_reload"))
         except Exception as e:
+            self.btn_drop_cache.setEnabled(True)
             QMessageBox.critical(self, "Error", str(e))
 
     def unload_current_model(self):
@@ -2421,10 +2390,10 @@ class TrayAIApp(QMainWindow):
         self.bar_prompt_activity.setValue(0)
         self.lbl_load_stage.setText(self.t("lbl_no_model"))
         self.lbl_tel_phase.setText(self.t("tel_waiting"))
-        self.lbl_prompt_read.setText("📖 Prompt Read: %0")
-        self.lbl_token_counter.setText("🔢 Token: 0")
+        self.lbl_prompt_read.setText(self.t("prompt_read_prefix").format(val=0))
+        self.lbl_token_counter.setText(self.t("tokens_prefix").format(val=0))
         self.btn_unload_model.setEnabled(False)
-        self.btn_drop_cache.setEnabled(True) # Model boşaltıldı! Şimdi RAM Temizleme butonu AKTİF!
+        self.btn_drop_cache.setEnabled(True)
         self.btn_load_model.setText(self.t("btn_load"))
         if self.server_service_enabled:
             self.status_lbl.setText(self.t("srv_unloaded"))
@@ -2459,6 +2428,7 @@ class TrayAIApp(QMainWindow):
         self.lbl_tel_phase.setText(self.t("tel_waiting"))
         self.status_lbl.setText(self.t("srv_ready"))
         self.status_lbl.setStyleSheet("color: #9ece6a; font-weight: bold;")
+        self.btn_drop_cache.setEnabled(False)
         tray_ref.setIcon(get_tray_icon("active"))
 
     def on_tool_call_log(self, msg):
@@ -2475,7 +2445,7 @@ class TrayAIApp(QMainWindow):
         pp_speed = info.get("pp_speed", 0.0)
         is_tool = info.get("is_tool_call", False) or self.remote_tool_active
 
-        self.lbl_ctx_usage.setText(f"📦 Ctx: {n_past} / {n_ctx}")
+        self.lbl_ctx_usage.setText(self.t("ctx_prefix").format(past=n_past, ctx=n_ctx))
 
         if is_proc:
             tray_ref.setIcon(get_tray_icon("generating"))
@@ -2483,30 +2453,32 @@ class TrayAIApp(QMainWindow):
                 self.remote_tool_active = False
                 pct = info["prompt_pct"]
                 self.lbl_tel_phase.setText(self.t("tel_reading"))
-                self.lbl_prompt_read.setText(f"📖 Prompt Read: %{pct}")
-                self.lbl_token_counter.setText("🔢 Token: 0")
+                self.lbl_prompt_read.setText(self.t("prompt_read_prefix").format(val=pct))
+                self.lbl_token_counter.setText(self.t("tokens_prefix").format(val=0))
                 self.bar_prompt_activity.setValue(pct)
                 if pp_speed > 0:
-                    self.lbl_tel_speed.setText(f"⚡ PP: {pp_speed:.1f} t/s")
+                    self.lbl_tel_speed.setText(self.t("speed_pp").format(val=f"{pp_speed:.1f}"))
             else:
-                self.lbl_prompt_read.setText("📖 Prompt Read: %100")
+                self.lbl_prompt_read.setText(self.t("prompt_read_prefix").format(val=100))
                 self.bar_prompt_activity.setValue(100)
                 if is_tool:
                     self.lbl_tel_phase.setText(self.t("tel_tool"))
                 else:
                     self.lbl_tel_phase.setText(self.t("tel_gen"))
-                    self.lbl_token_counter.setText(f"🔢 Token: {tokens_gen}")
+                    self.lbl_token_counter.setText(self.t("tokens_prefix").format(val=tokens_gen))
 
                 if tg_speed > 0:
-                    self.lbl_tel_speed.setText(f"⚡ TG: {tg_speed:.1f} t/s")
+                    self.lbl_tel_speed.setText(self.t("speed_tg").format(val=f"{tg_speed:.1f}"))
         else:
             self.remote_tool_active = False
             tray_ref.setIcon(get_tray_icon("active"))
             self.lbl_tel_phase.setText(self.t("tel_done"))
             if tg_speed > 0:
-                self.lbl_tel_speed.setText(f"⚡ {tg_speed:.1f} t/s")
+                self.lbl_tel_speed.setText(self.t("speed_prefix").format(val=f"{tg_speed:.1f}"))
 
     def on_process_stopped(self, code):
+        self.btn_drop_cache.setEnabled(True)
+        self.btn_unload_model.setEnabled(False)
         if self.load_progress_bar.value() < 100 and code != 0:
             self.lbl_load_stage.setText(f"❌ Code: {code} (Check Server Logs)")
             self.status_lbl.setText(self.t("srv_error"))
