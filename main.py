@@ -3,10 +3,6 @@ import os
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
-else:
-    if getattr(sys, 'frozen', False):
-    # PyInstaller onedir modunda dosyalar executable'ın yanındadır, onefile modunda _MEIPASS içindedir
-    BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
     if not os.path.exists(os.path.join(BASE_DIR, "lang")):
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         if os.path.exists(os.path.join(exe_dir, "lang")):
