@@ -1096,13 +1096,25 @@ class TrayAIApp(QMainWindow):
         if isinstance(eff_list, list):
             eff_list = self.t("eff_items")
         if isinstance(eff_list, list):
+            eff_list = self.t("eff_items")
+        if isinstance(eff_list, list):
             self.cb_thinking_effort.addItems([str(x) for x in eff_list])
         else:
-            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"]) for x in eff_list])
+            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         else:
             eff_list = self.t("eff_items")
         if isinstance(eff_list, list):
             self.cb_thinking_effort.addItems([str(x) for x in eff_list])
+        else:
+            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
+        else:
+            eff_list = self.t("eff_items")
+        if isinstance(eff_list, list):
+            eff_list = self.t("eff_items")
+        if isinstance(eff_list, list):
+            self.cb_thinking_effort.addItems([str(x) for x in eff_list])
+        else:
+            self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         else:
             self.cb_thinking_effort.addItems(["Kapalı", "Düşük (Low)", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])", "Orta (Medium)", "Yüksek (High)", "Özel Bütçe"])
         self.cb_thinking_effort.setEnabled(False)
