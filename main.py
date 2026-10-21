@@ -2359,10 +2359,10 @@ class TrayAIApp(QMainWindow):
             extra.extend(["--mmproj", mmproj_path])
 
         if self.chk_mtp.isChecked():
-            extra.extend(["--draft-max", "2", "--draft-min", "1"])
+            extra.extend(["--spec-draft-n-max", "2", "--spec-draft-n-min", "1"])
 
         if self.chk_enable_draft.isChecked() and self.selected_draft_path:
-            extra.extend(["-md", self.selected_draft_path, "--draft-max", str(self.spin_draft_max.value())])
+            extra.extend(["-md", self.selected_draft_path, "--spec-draft-n-max", str(self.spin_draft_max.value())])
 
         self.txt_logs.clear()
         self.poller.set_port(port)
