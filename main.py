@@ -126,7 +126,7 @@ class MetadataInspectorDialog(QDialog):
     def __init__(self, parent, model_info):
         super().__init__(parent)
         self.setWindowTitle(f"🔍 GGUF Metadata & Mimari Müfettişi — {model_info.get('filename', '')}")
-        self.resize(700, 640)
+        self.resize(700, 880)
         self.setStyleSheet(DARK_STYLE)
 
         layout = QVBoxLayout(self)
@@ -301,7 +301,7 @@ class TrayAIApp(QMainWindow):
         super().__init__()
         self.runner_ref = runner_ref
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
-        self.resize(740, 890)
+        self.resize(740, 880)
         self.setStyleSheet(DARK_STYLE)
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
