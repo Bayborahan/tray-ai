@@ -1,3 +1,12 @@
+from PyQt6.QtCore import QObject, QEvent
+
+class NoWheelEventFilter(QObject):
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            event.ignore()
+            return True
+        return super().eventFilter(obj, event)
+
 import sys
 import os
 
@@ -15,6 +24,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 import json
+import time
 import socket
 import psutil
 import subprocess
@@ -28,14 +38,16 @@ from PyQt6.QtWidgets import (
     QInputDialog, QStackedWidget, QSplitter, QDialog, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer, QLocale
-from PyQt6.QtGui import QIcon, QAction, QColor, QPixmap, QCursor, QGuiApplication, QPainter, QBrush
+from PyQt6.QtGui import QTextCursor, QIcon, QAction, QColor, QPixmap, QCursor, QGuiApplication, QPainter, QBrush
 
 from core.cache_manager import CacheManager
 from core.gguf_parser import analyze_gguf_file, estimate_memory_usage_gb
 from core.server_manager import ServerManager, TelemetryPoller
-from core.hardware import get_system_hardware
+from core.hardware import get_system_hardware, read_drm_vram_used_gb
 from core.hf_downloader import HFSearchWorker, HFFilesWorker, DownloadWorker
 from core.engine_updater import EngineVersionChecker, EngineUpdateWorker
+from core.api_gateway import APIGatewayServer
+from core.whisper_manager import AudioRecorder, TranscribeWorker, WhisperDownloadWorker, WHISPER_MODELS_DIR
 from ui.styles import DARK_STYLE
 
 USER_ENGINES_DIR = os.path.expanduser("~/.local/share/tray-ai/engines")
@@ -48,7 +60,7 @@ search_dirs = [
 for sdir in search_dirs:
     if os.path.isdir(sdir):
         import shutil
-        for ef in ["llama-server"]:
+        for ef in ["llama-server", "whisper-cli"]:
             src = os.path.join(sdir, ef)
             dst = os.path.join(USER_ENGINES_DIR, ef)
             if os.path.exists(src) and not os.path.exists(dst):
@@ -120,6 +132,160 @@ def get_tray_icon(state="ready"):
     p.drawEllipse(12, 12, 8, 8)
     p.end()
     return QIcon(pixmap)
+
+from ui.chat_dialog import ChatTesterDialog
+
+
+class VoiceAssistantDialog(QDialog):
+    def __init__(self, parent, engines_dir, gateway_port):
+        super().__init__(parent)
+        self.engines_dir = engines_dir
+        self.gateway_port = gateway_port
+        self.setWindowTitle("🎙️ Yerel Whisper Sesli Asistan")
+        self.resize(520, 560)
+        self.setStyleSheet(DARK_STYLE)
+
+        self.recorder = AudioRecorder()
+        self.model_path = os.path.join(WHISPER_MODELS_DIR, "ggml-base.bin")
+
+        l = QVBoxLayout(self)
+        l.setSpacing(10)
+
+        # Üst Bilgi Kartı
+        top_frame = QFrame()
+        top_frame.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; border-radius: 8px; padding: 8px;")
+        v_top = QVBoxLayout(top_frame)
+        self.lbl_model_status = QLabel()
+        self.lbl_model_status.setStyleSheet("font-size: 12px; color: #7dcfff;")
+        v_top.addWidget(self.lbl_model_status)
+
+        self.btn_dl_model = QPushButton("⬇️ Whisper Modelini İndir (~140 MB)")
+        self.btn_dl_model.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold;")
+        self.btn_dl_model.clicked.connect(self.download_whisper_model)
+        v_top.addWidget(self.btn_dl_model)
+        l.addWidget(top_frame)
+
+        # Bas-Konuş Mikrofon Alanı
+        mid_frame = QFrame()
+        mid_frame.setStyleSheet("background: #16161e; border: 1px solid #292e42; border-radius: 8px; padding: 12px;")
+        v_mid = QVBoxLayout(mid_frame)
+        v_mid.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_mic_status = QLabel("Konuşmak için butona basılı tutun")
+        self.lbl_mic_status.setStyleSheet("color: #a9b1d6; font-size: 13px; font-weight: bold;")
+        v_mid.addWidget(self.lbl_mic_status, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.btn_mic = QPushButton("🎙️ BAS - KONUŞ")
+        self.btn_mic.setFixedSize(220, 55)
+        self.btn_mic.setStyleSheet("background: #7aa2f7; color: #15161e; font-size: 15px; font-weight: bold; border-radius: 27px;")
+        self.btn_mic.pressed.connect(self.start_talking)
+        self.btn_mic.released.connect(self.stop_talking)
+        v_mid.addWidget(self.btn_mic, alignment=Qt.AlignmentFlag.AlignCenter)
+        l.addWidget(mid_frame)
+
+        # Seçenekler
+        opt_box = QHBoxLayout()
+        self.chk_auto_ask = QCheckBox("Metni doğrudan aktif LLM'e sor")
+        self.chk_auto_ask.setChecked(True)
+        self.chk_copy_clip = QCheckBox("Panoya Kopyala")
+        self.chk_copy_clip.setChecked(True)
+        opt_box.addWidget(self.chk_auto_ask)
+        opt_box.addWidget(self.chk_copy_clip)
+        l.addLayout(opt_box)
+
+        # Konuşulan Metin ve Model Cevabı
+        l.addWidget(QLabel("<b>Duyulan / Transkript:</b>"))
+        self.txt_transcript = QPlainTextEdit()
+        self.txt_transcript.setFixedHeight(70)
+        self.txt_transcript.setPlaceholderText("Konuştuğunuz cümle burada belirecek...")
+        l.addWidget(self.txt_transcript)
+
+        l.addWidget(QLabel("<b>Yapay Zeka Cevabı:</b>"))
+        self.txt_response = QPlainTextEdit()
+        self.txt_response.setReadOnly(True)
+        self.txt_response.setStyleSheet("background: #13141c; color: #9ece6a; font-family: sans-serif;")
+        l.addWidget(self.txt_response, 1)
+
+        self.check_model_state()
+
+    def check_model_state(self):
+        if os.path.exists(self.model_path):
+            self.lbl_model_status.setText(f"✓ Whisper Modeli Hazır: ggml-base.bin ({round(os.path.getsize(self.model_path)/(1024*1024))} MB)")
+            self.btn_dl_model.hide()
+            self.btn_mic.setEnabled(True)
+        else:
+            self.lbl_model_status.setText("⚠️ Whisper modeli bulunamadı. Lütfen modeli indirin.")
+            self.btn_dl_model.show()
+            self.btn_mic.setEnabled(False)
+
+    def download_whisper_model(self):
+        self.btn_dl_model.setEnabled(False)
+        self.lbl_model_status.setText("⏳ Model indiriliyor...")
+        self.dl_worker = WhisperDownloadWorker(self.model_path)
+        self.dl_worker.progress.connect(lambda p, m: self.lbl_model_status.setText(f"⏳ {m} (%{p})"))
+        self.dl_worker.finished_ok.connect(lambda: (self.check_model_state(), QMessageBox.information(self, "Whisper", "Model hazır!")))
+        self.dl_worker.error.connect(lambda e: (self.lbl_model_status.setText(f"❌ {e}"), self.btn_dl_model.setEnabled(True)))
+        self.dl_worker.start()
+
+    def start_talking(self):
+        try:
+            self.recorder.start_recording()
+            self.btn_mic.setText("🔴 DİNLİYOR...")
+            self.btn_mic.setStyleSheet("background: #f7768e; color: #15161e; font-size: 15px; font-weight: bold; border-radius: 27px;")
+            self.lbl_mic_status.setText("Dinleniyor... Bıraktığınızda çözümlenecek.")
+        except Exception as e:
+            QMessageBox.warning(self, "Ses Hatası", str(e))
+
+    def stop_talking(self):
+        self.recorder.stop_recording()
+        self.btn_mic.setText("⏳ ÇÖZÜMLENİYOR...")
+        self.btn_mic.setStyleSheet("background: #e0af68; color: #15161e; font-size: 14px; font-weight: bold; border-radius: 27px;")
+        self.lbl_mic_status.setText("Whisper sesi metne dönüştürüyor...")
+
+        self.trans_worker = TranscribeWorker(self.engines_dir, self.model_path, lang="tr")
+        self.trans_worker.finished_text.connect(self.on_transcribed)
+        self.trans_worker.error.connect(self.on_transcribe_error)
+        self.trans_worker.start()
+
+    def on_transcribed(self, text):
+        self.btn_mic.setText("🎙️ BAS - KONUŞ")
+        self.btn_mic.setStyleSheet("background: #7aa2f7; color: #15161e; font-size: 15px; font-weight: bold; border-radius: 27px;")
+        self.lbl_mic_status.setText("Tamamlandı!")
+        self.txt_transcript.setPlainText(text)
+
+        if self.chk_copy_clip.isChecked() and text:
+            QApplication.clipboard().setText(text)
+
+        if self.chk_auto_ask.isChecked() and text:
+            self.ask_llm(text)
+
+    def on_transcribe_error(self, err):
+        self.btn_mic.setText("🎙️ BAS - KONUŞ")
+        self.btn_mic.setStyleSheet("background: #7aa2f7; color: #15161e; font-size: 15px; font-weight: bold; border-radius: 27px;")
+        self.lbl_mic_status.setText(f"⚠️ {err}")
+
+    def ask_llm(self, prompt):
+        self.txt_response.setPlainText("⏳ Aktif yapay zeka modeline soruluyor...")
+        port = self.gateway_port
+        url = f"http://127.0.0.1:{port}/v1/chat/completions"
+
+        def _worker():
+            try:
+                r = requests.post(
+                    url,
+                    json={"messages": [{"role": "user", "content": prompt}], "stream": False},
+                    timeout=120
+                )
+                if r.status_code == 200:
+                    ans = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    QTimer.singleShot(0, lambda: self.txt_response.setPlainText(ans))
+                else:
+                    QTimer.singleShot(0, lambda: self.txt_response.setPlainText(f"Hata: {r.status_code} - {r.text}"))
+            except Exception as e:
+                QTimer.singleShot(0, lambda: self.txt_response.setPlainText(f"Bağlantı Hatası: {e}"))
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 class MetadataInspectorDialog(QDialog):
@@ -341,18 +507,68 @@ class TrayAIApp(QMainWindow):
         self.status_lbl = QLabel()
         self.status_lbl.setStyleSheet("color: #7dcfff; font-weight: bold;")
         
+        btn_frameless_style = """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #a9b1d6;
+                font-size: 16px;
+                border-radius: 6px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(122, 162, 247, 0.15);
+                color: #7dcfff;
+            }
+        """
+        btn_close_frameless_style = """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #7a829e;
+                font-size: 15px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(247, 118, 142, 0.18);
+                color: #f7768e;
+            }
+        """
+        self.btn_chat_tester = QPushButton("💬")
+        self.btn_chat_tester.setFixedSize(28, 28)
+        self.btn_chat_tester.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_chat_tester.setStyleSheet(btn_frameless_style)
+        self.btn_chat_tester.setToolTip("Model Test Sohbeti (Mini Playground)")
+        self.btn_chat_tester.clicked.connect(self.open_chat_tester)
+
+        self.btn_voice_assistant = QPushButton("🎙️")
+        self.btn_voice_assistant.setFixedSize(28, 28)
+        self.btn_voice_assistant.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_voice_assistant.setStyleSheet(btn_frameless_style)
+        self.btn_voice_assistant.setToolTip("Sesli Asistan (Whisper Bas-Konuş)")
+        self.btn_voice_assistant.clicked.connect(self.open_voice_assistant)
+
         self.btn_settings = QPushButton("⚙️")
-        self.btn_settings.setFixedSize(30, 26)
+        self.btn_settings.setFixedSize(28, 28)
+        self.btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_settings.setStyleSheet(btn_frameless_style)
         self.btn_settings.setToolTip("Uygulama Ayarları / Application Settings")
         self.btn_settings.clicked.connect(self.toggle_settings_view)
 
         btn_close = QPushButton("✕")
-        btn_close.setFixedSize(26, 26)
+        btn_close.setFixedSize(28, 28)
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet(btn_close_frameless_style)
+        btn_close.setToolTip("Pencereyi Kapat")
         btn_close.clicked.connect(self.hide)
 
         top_bar.addWidget(self.lbl_title)
         top_bar.addStretch()
         top_bar.addWidget(self.status_lbl)
+        top_bar.addWidget(self.btn_chat_tester)
+        top_bar.addWidget(self.btn_voice_assistant)
         top_bar.addWidget(self.btn_settings)
         top_bar.addWidget(btn_close)
         self.main_layout.addLayout(top_bar)
@@ -372,104 +588,227 @@ class TrayAIApp(QMainWindow):
 
         self.init_settings_page()
 
-        telemetry_frame = QFrame()
-        telemetry_frame.setStyleSheet("background: #1a1b26; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
-        v_tel = QVBoxLayout(telemetry_frame)
-        v_tel.setContentsMargins(8, 5, 8, 5)
-        v_tel.setSpacing(4)
+        # ============================================================
+        # ENTEGRE ALT KONSOL (UNIFIED BOTTOM DOCK & HUD)
+        # ============================================================
+        bottom_dock = QFrame()
+        bottom_dock.setStyleSheet("""
+            QFrame#bottomDock {
+                background: #16161e;
+                border: 1px solid #292e42;
+                border-top: 2px solid #3b4261;
+                border-radius: 10px;
+                padding: 6px;
+            }
+        """)
+        bottom_dock.setObjectName("bottomDock")
+        v_dock = QVBoxLayout(bottom_dock)
+        v_dock.setContentsMargins(10, 8, 10, 8)
+        v_dock.setSpacing(6)
 
-        h_tel_top = QHBoxLayout()
+        # 1. Satır: İstemci Durum Rozeti + Üretim Hızı + Kes Butonu
+        h_hud_top = QHBoxLayout()
         self.lbl_tel_phase = QLabel()
-        self.lbl_tel_phase.setStyleSheet("color: #a9b1d6; font-size: 12px;")
+        self.lbl_tel_phase.setStyleSheet("color: #a9b1d6; font-size: 12px; font-weight: 500;")
+
         self.lbl_tel_speed = QLabel(self.t("speed_prefix").format(val="0.0"))
-        self.lbl_tel_speed.setStyleSheet("color: #73daca; font-weight: bold; font-size: 12px;")
-        
+        self.lbl_tel_speed.setStyleSheet("""
+            background: #1f2335;
+            color: #73daca;
+            font-weight: bold;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 5px;
+            border: 1px solid #3b4261;
+        """)
+
         self.btn_abort_gen = QPushButton("🛑")
-        self.btn_abort_gen.setFixedHeight(22)
-        self.btn_abort_gen.setStyleSheet("background: #414868; color: #f7768e; font-size: 11px; padding: 2px 6px;")
+        self.btn_abort_gen.setFixedSize(28, 26)
+        self.btn_abort_gen.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_abort_gen.setToolTip("Mevcut üretimi yarıda kes")
+        self.btn_abort_gen.setStyleSheet("""
+            QPushButton {
+                background: #24283b;
+                border: 1px solid #414868;
+                color: #f7768e;
+                font-size: 11px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background: #f7768e;
+                color: #15161e;
+            }
+        """)
         self.btn_abort_gen.clicked.connect(self.abort_current_generation)
 
-        h_tel_top.addWidget(self.lbl_tel_phase, 1)
-        h_tel_top.addWidget(self.lbl_tel_speed)
-        h_tel_top.addWidget(self.btn_abort_gen)
-        v_tel.addLayout(h_tel_top)
+        h_hud_top.addWidget(self.lbl_tel_phase, 1)
+        h_hud_top.addWidget(self.lbl_tel_speed)
+        h_hud_top.addWidget(self.btn_abort_gen)
+        v_dock.addLayout(h_hud_top)
 
-        h_tel_mid = QHBoxLayout()
-        self.lbl_prompt_read = QLabel("📖 Prompt Read: %0")
-        self.lbl_prompt_read.setStyleSheet("color: #7dcfff; font-weight: bold; font-size: 12px;")
+        # 2. Satır: Dijital Sayaç Rozetleri (Prompt % / Token / Ctx)
+        h_counters = QHBoxLayout()
+        h_counters.setSpacing(6)
+
+        counter_style = """
+            QLabel {
+                background: #1a1e2d;
+                border: 1px solid #292e42;
+                border-radius: 5px;
+                padding: 3px 6px;
+                font-size: 11px;
+            }
+        """
+
+        self.lbl_prompt_read = QLabel("📖 Prompt: %0")
+        self.lbl_prompt_read.setStyleSheet(counter_style + "QLabel { color: #7dcfff; font-weight: bold; }")
+
         self.lbl_token_counter = QLabel("🔢 Token: 0")
-        self.lbl_token_counter.setStyleSheet("color: #bb9af7; font-weight: bold; font-size: 13px;")
+        self.lbl_token_counter.setStyleSheet(counter_style + "QLabel { color: #bb9af7; font-weight: bold; }")
+
         self.lbl_ctx_usage = QLabel("📦 Ctx: 0 / 0")
-        self.lbl_ctx_usage.setStyleSheet("color: #e0af68; font-size: 12px;")
+        self.lbl_ctx_usage.setStyleSheet(counter_style + "QLabel { color: #e0af68; }")
 
-        h_tel_mid.addWidget(self.lbl_prompt_read)
-        h_tel_mid.addStretch()
-        h_tel_mid.addWidget(self.lbl_token_counter)
-        h_tel_mid.addStretch()
-        h_tel_mid.addWidget(self.lbl_ctx_usage)
-        v_tel.addLayout(h_tel_mid)
+        h_counters.addWidget(self.lbl_prompt_read, 1)
+        h_counters.addWidget(self.lbl_token_counter, 1)
+        h_counters.addWidget(self.lbl_ctx_usage, 1)
+        v_dock.addLayout(h_counters)
 
+        # 3. İnce Prompt Akış Çizgisi
         self.bar_prompt_activity = QProgressBar()
         self.bar_prompt_activity.setRange(0, 100)
         self.bar_prompt_activity.setValue(0)
-        self.bar_prompt_activity.setFixedHeight(8)
+        self.bar_prompt_activity.setFixedHeight(4)
         self.bar_prompt_activity.setTextVisible(False)
-        self.bar_prompt_activity.setStyleSheet("QProgressBar { background: #24283b; border-radius: 4px; } QProgressBar::chunk { background: #bb9af7; border-radius: 4px; }")
-        v_tel.addWidget(self.bar_prompt_activity)
+        self.bar_prompt_activity.setStyleSheet("""
+            QProgressBar { background: #1f2335; border: none; border-radius: 2px; }
+            QProgressBar::chunk { background: #bb9af7; border-radius: 2px; }
+        """)
+        v_dock.addWidget(self.bar_prompt_activity)
 
-        self.main_layout.addWidget(telemetry_frame)
-
-        load_frame = QFrame()
-        load_frame.setStyleSheet("background: #16161e; border: 1px solid #292e42; border-radius: 6px; padding: 6px;")
-        v_load = QVBoxLayout(load_frame)
-        v_load.setContentsMargins(6, 5, 6, 5)
-        v_load.setSpacing(5)
-
+        # 4. Model Yükleme Durumu & İnce Yükleme Barı
+        h_load_info = QHBoxLayout()
         self.lbl_load_stage = QLabel()
-        self.lbl_load_stage.setStyleSheet("font-size: 12px; color: #a9b1d6;")
-        v_load.addWidget(self.lbl_load_stage)
+        self.lbl_load_stage.setStyleSheet("font-size: 11px; color: #7aa2f7;")
+        h_load_info.addWidget(self.lbl_load_stage)
+        v_dock.addLayout(h_load_info)
 
         self.load_progress_bar = QProgressBar()
         self.load_progress_bar.setRange(0, 100)
         self.load_progress_bar.setValue(0)
-        self.load_progress_bar.setFixedHeight(14)
-        v_load.addWidget(self.load_progress_bar)
+        self.load_progress_bar.setFixedHeight(5)
+        self.load_progress_bar.setTextVisible(False)
+        self.load_progress_bar.setStyleSheet("""
+            QProgressBar { background: #1f2335; border: none; border-radius: 2px; }
+            QProgressBar::chunk { background: #9ece6a; border-radius: 2px; }
+        """)
+        v_dock.addWidget(self.load_progress_bar)
 
-        h_btns = QHBoxLayout()
-        h_btns.setSpacing(6)
+        # 5. Ergonomik Eylem Butonları Barı
+        h_actions = QHBoxLayout()
+        h_actions.setSpacing(8)
+
         self.btn_load_model = QPushButton()
-        self.btn_load_model.setMinimumHeight(40)
-        self.btn_load_model.setStyleSheet("background-color: #9ece6a; color: #15161e; font-size: 12px; font-weight: bold; border-radius: 6px; padding: 6px 10px;")
+        self.btn_load_model.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_load_model.setFixedHeight(36)
+        self.btn_load_model.setStyleSheet("""
+            QPushButton {
+                background: #9ece6a;
+                color: #15161e;
+                font-size: 12px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 4px 14px;
+            }
+            QPushButton:hover {
+                background: #b9f27c;
+            }
+            QPushButton:disabled {
+                background: #24283b;
+                color: #565f89;
+            }
+        """)
         self.btn_load_model.clicked.connect(self.load_selected_model)
 
         self.btn_unload_model = QPushButton()
-        self.btn_unload_model.setMinimumHeight(40)
-        self.btn_unload_model.setStyleSheet("background-color: #f7768e; color: #15161e; font-size: 12px; font-weight: bold; border-radius: 6px; padding: 6px 10px;")
+        self.btn_unload_model.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_unload_model.setFixedHeight(36)
         self.btn_unload_model.setEnabled(False)
+        self.btn_unload_model.setStyleSheet("""
+            QPushButton {
+                background: #1f2335;
+                border: 1px solid #f7768e;
+                color: #f7768e;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background: #f7768e;
+                color: #15161e;
+            }
+            QPushButton:disabled {
+                border-color: #3b4261;
+                color: #565f89;
+                background: #16161e;
+            }
+        """)
         self.btn_unload_model.clicked.connect(self.unload_current_model)
 
         self.btn_drop_cache = QPushButton()
-        self.btn_drop_cache.setMinimumHeight(40)
-        self.btn_drop_cache.setStyleSheet("background-color: #7aa2f7; color: #15161e; font-size: 11px; font-weight: bold; border-radius: 6px; padding: 6px 8px;")
-        self.btn_drop_cache.setEnabled(True)
+        self.btn_drop_cache.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_drop_cache.setFixedHeight(36)
+        self.btn_drop_cache.setStyleSheet("""
+            QPushButton {
+                background: #1f2335;
+                border: 1px solid #3b4261;
+                color: #7aa2f7;
+                font-size: 11px;
+                font-weight: 500;
+                border-radius: 6px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background: #24283b;
+                border-color: #7aa2f7;
+                color: #7dcfff;
+            }
+        """)
         self.btn_drop_cache.clicked.connect(self.flush_system_ram_cache)
 
-        h_btns.addWidget(self.btn_load_model, 3)
-        h_btns.addWidget(self.btn_unload_model, 2)
-        h_btns.addWidget(self.btn_drop_cache, 2)
-        v_load.addLayout(h_btns)
+        h_actions.addWidget(self.btn_load_model, 3)
+        h_actions.addWidget(self.btn_unload_model, 2)
+        h_actions.addWidget(self.btn_drop_cache, 2)
+        v_dock.addLayout(h_actions)
 
-        self.main_layout.addWidget(load_frame)
+        self.main_layout.addWidget(bottom_dock)
 
         self.res_timer = QTimer(self)
         self.res_timer.timeout.connect(self.update_resource_monitor)
         self.res_timer.start(2000)
 
-        self.poller = TelemetryPoller(port=int(self.cfg.get("port", 8080)))
+        user_port = int(self.cfg.get("port", 8080))
+        self.upstream_port = user_port + 1
+
+        self.poller = TelemetryPoller(port=self.upstream_port)
         self.poller.health_ready.connect(self.on_health_confirmed_ready)
         self.poller.loading_tick.connect(self.on_health_loading_tick)
         self.poller.telemetry_update.connect(self.on_live_telemetry)
         self.poller.start()
+
+        # Dinamik API Gateway'i Başlat
+        self.api_gateway = APIGatewayServer(
+            host="0.0.0.0" if self.chk_lan.isChecked() else "127.0.0.1",
+            port=user_port,
+            upstream_port=self.upstream_port,
+            get_all_models_func=self.get_gateway_models_list,
+            get_active_model_id_func=self.get_current_active_model_id
+        )
+        self.api_gateway.log_signal.connect(lambda msg: self.txt_logs.appendPlainText(f"[Gateway] {msg}"))
+        self.api_gateway.sig_switch_model.connect(self.on_gateway_request_switch_model)
+        self.api_gateway.start()
 
         self.apply_language()
 
@@ -494,6 +833,20 @@ class TrayAIApp(QMainWindow):
         if val is None:
             return default if default is not None else key
         return val
+
+    def set_status_badge(self, state, text=None):
+        styles = {
+            "waiting": "background: rgba(122, 162, 247, 0.12); color: #7aa2f7; border: 1px solid rgba(122, 162, 247, 0.4);",
+            "loading": "background: rgba(224, 175, 104, 0.12); color: #e0af68; border: 1px solid rgba(224, 175, 104, 0.4);",
+            "ready": "background: rgba(158, 206, 106, 0.14); color: #9ece6a; border: 1px solid rgba(158, 206, 106, 0.45);",
+            "stopped": "background: rgba(247, 118, 142, 0.12); color: #f7768e; border: 1px solid rgba(247, 118, 142, 0.4);",
+            "unloaded": "background: rgba(125, 207, 255, 0.12); color: #7dcfff; border: 1px solid rgba(125, 207, 255, 0.4);",
+            "error": "background: rgba(247, 118, 142, 0.20); color: #f7768e; border: 1px solid #f7768e;"
+        }
+        st = styles.get(state, styles["waiting"])
+        self.status_lbl.setStyleSheet(f"border-radius: 13px; padding: 4px 12px; font-weight: bold; font-size: 11px; {st}")
+        if text:
+            self.status_lbl.setText(text)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 45:
@@ -748,6 +1101,29 @@ class TrayAIApp(QMainWindow):
         self.lbl_eng_update_status.setText(f"❌ Güncelleme Hatası: {err}")
         QMessageBox.warning(self, "Engine Update Error", err)
 
+    def notify_desktop(self, title, message, icon_type="info"):
+        tray = getattr(self.runner_ref, "tray", None) if hasattr(self, "runner_ref") else None
+        if not tray:
+            return
+
+        icon_map = {
+            "info": QSystemTrayIcon.MessageIcon.Information,
+            "warning": QSystemTrayIcon.MessageIcon.Warning,
+            "error": QSystemTrayIcon.MessageIcon.Critical
+        }
+        msg_icon = icon_map.get(icon_type, QSystemTrayIcon.MessageIcon.Information)
+        tray.showMessage(title, message, msg_icon, 4000)
+
+    def open_chat_tester(self):
+        user_port = self.spin_port.value()
+        dlg = ChatTesterDialog(self, user_port, self.get_current_active_model_id)
+        dlg.exec()
+
+    def open_voice_assistant(self):
+        user_port = self.spin_port.value()
+        dlg = VoiceAssistantDialog(self, USER_ENGINES_DIR, user_port)
+        dlg.exec()
+
     def toggle_settings_view(self):
         if self.view_stack.currentIndex() == 0:
             self.view_stack.setCurrentIndex(1)
@@ -869,18 +1245,15 @@ class TrayAIApp(QMainWindow):
         top_btn.addWidget(self.lbl_folder)
         top_btn.addStretch()
 
-        self.btn_open_folder = QPushButton("📁 Klasörde Göster")
-        self.btn_open_folder.clicked.connect(self.open_model_in_file_manager)
+        self.btn_open_folder = QPushButton("📁 Klasörü Aç")
+        self.btn_open_folder.setToolTip("Model klasörünü dosya yöneticisinde açar")
+        self.btn_open_folder.clicked.connect(self.open_root_folder_in_file_manager)
         top_btn.addWidget(self.btn_open_folder)
-
-        self.btn_delete_model = QPushButton("🗑️ Sil")
-        self.btn_delete_model.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold;")
-        self.btn_delete_model.clicked.connect(self.delete_selected_model_file)
-        top_btn.addWidget(self.btn_delete_model)
         l.addLayout(top_btn)
 
         filter_bar = QHBoxLayout()
         self.input_model_search = QLineEdit()
+        self.input_model_search.setClearButtonEnabled(True)
         self.input_model_search.setPlaceholderText("🔎 Yerel modellerde ara (isim, mimari, quant)...")
         self.input_model_search.textChanged.connect(self.refresh_model_list_view)
         filter_bar.addWidget(self.input_model_search, 2)
@@ -935,23 +1308,23 @@ class TrayAIApp(QMainWindow):
 
         self.lbl_model_meta_summary = QLabel()
         self.lbl_model_meta_summary.setWordWrap(True)
-        self.lbl_model_meta_summary.setStyleSheet("background: #1f2335; color: #7dcfff; padding: 8px; border-radius: 5px; font-size: 12px;")
+        self.lbl_model_meta_summary.setStyleSheet("background: #1a1e2d; border: 1px solid #292e42; border-left: 3px solid #bb9af7; color: #7dcfff; padding: 10px; border-radius: 8px; font-size: 12px;")
         l.addWidget(self.lbl_model_meta_summary)
 
         h_quick_actions = QHBoxLayout()
         self.btn_inspect_meta = QPushButton("🔍 GGUF Metadata & Şablon Müfettişi")
-        self.btn_inspect_meta.setStyleSheet("background: #3b4261; color: #7dcfff; font-weight: bold;")
+        self.btn_inspect_meta.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; color: #7dcfff; font-weight: bold; border-radius: 6px; padding: 7px;")
         self.btn_inspect_meta.clicked.connect(self.open_metadata_inspector)
 
         self.btn_autotune = QPushButton("⚡ Donanıma Göre Otomatik Ayarla (Auto-Tune)")
-        self.btn_autotune.setStyleSheet("background: #3b4261; color: #9ece6a; font-weight: bold;")
+        self.btn_autotune.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; color: #9ece6a; font-weight: bold; border-radius: 6px; padding: 7px;")
         self.btn_autotune.clicked.connect(self.autotune_for_hardware)
         h_quick_actions.addWidget(self.btn_inspect_meta, 1)
         h_quick_actions.addWidget(self.btn_autotune, 1)
         l.addLayout(h_quick_actions)
 
         mem_est_frame = QFrame()
-        mem_est_frame.setStyleSheet("background: #1f2335; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
+        mem_est_frame.setStyleSheet("background: #1a1e2d; border: 1px solid #292e42; border-left: 3px solid #e0af68; border-radius: 8px; padding: 8px;")
         v_est = QVBoxLayout(mem_est_frame)
         v_est.setContentsMargins(6, 4, 6, 4)
         self.lbl_mem_estimate = QLabel(self.t("mem_est_initial"))
@@ -1027,6 +1400,11 @@ class TrayAIApp(QMainWindow):
         self.chk_mlock = QCheckBox()
         grid_kv.addWidget(self.chk_mmap, 2, 0, 1, 2)
         grid_kv.addWidget(self.chk_mlock, 2, 2, 1, 2)
+
+        self.chk_prompt_cache = QCheckBox("⚡ Prompt Caching (Anlık Kodlama / Snapshot)")
+        self.chk_prompt_cache.setChecked(True)
+        self.chk_prompt_cache.setToolTip("Cursor/Continue gibi araçlarda sistem promptunu ve kod bağlamını önbelleğe alarak ilk token gecikmesini sıfırlar.")
+        grid_kv.addWidget(self.chk_prompt_cache, 3, 0, 1, 4)
         l.addWidget(self.grp_kv)
 
         self.grp_batch = QGroupBox()
@@ -1202,7 +1580,7 @@ class TrayAIApp(QMainWindow):
         grid_s.addWidget(self.spin_seed, 4, 3)
         l.addWidget(self.grp_samp)
 
-        self.grp_adv_samp = QGroupBox("6. Gelişmiş Samplers (DRY, XTC, Dynamic Temp, YaRN & MoE)")
+        self.grp_adv_samp = QGroupBox("6. Gelişmiş Samplers (DRY, XTC, Dynamic Temp, YaRN && MoE)")
         grid_as = QGridLayout(self.grp_adv_samp)
 
         grid_as.addWidget(QLabel("DRY Multiplier:"), 0, 0)
@@ -1261,7 +1639,7 @@ class TrayAIApp(QMainWindow):
         grid_as.addWidget(self.spin_yarn_ext, 3, 3)
         l.addWidget(self.grp_adv_samp)
 
-        self.grp_cli = QGroupBox("7. Chat Template Override & Ekstra CLI Parametreleri")
+        self.grp_cli = QGroupBox("7. Chat Template Override && Ekstra CLI Parametreleri")
         v_cli = QVBoxLayout(self.grp_cli)
 
         h_tpl = QHBoxLayout()
@@ -1286,6 +1664,42 @@ class TrayAIApp(QMainWindow):
         self.spin_ngl.valueChanged.connect(self.recalculate_memory_estimate)
         self.cb_cache_k.currentIndexChanged.connect(self.recalculate_memory_estimate)
         self.cb_cache_v.currentIndexChanged.connect(self.recalculate_memory_estimate)
+
+        # Fare Tekerleği Koruma Filtresi
+        self._wheel_filter = NoWheelEventFilter(self)
+        wheel_widgets = [
+            self.spin_ctx, self.spin_ngl, self.spin_threads, self.spin_threads_batch,
+            self.spin_batch, self.spin_ubatch, self.spin_parallel, self.spin_rope_base,
+            self.spin_rope_scale, self.spin_temp, self.spin_topk, self.spin_topp,
+            self.spin_minp, self.spin_rep_pen, self.spin_rep_n, self.spin_pres_pen,
+            self.spin_freq_pen, self.spin_seed, self.spin_dry_mult, self.spin_dry_base,
+            self.spin_xtc_prob, self.spin_xtc_thresh, self.spin_dynatemp, self.spin_typical,
+            self.spin_yarn_ext, self.cb_cache_k, self.cb_cache_v, self.cb_rope_scaling,
+            self.cb_chat_template, self.cb_mirostat
+        ]
+        for w in wheel_widgets:
+            if w:
+                w.installEventFilter(self._wheel_filter)
+
+        # Ayar değiştiğinde otomatik kaydet
+        auto_save = lambda *args: self.save_current_model_custom_config()
+        self.spin_ctx.valueChanged.connect(auto_save)
+        self.spin_ngl.valueChanged.connect(auto_save)
+        self.spin_temp.valueChanged.connect(auto_save)
+        self.spin_topp.valueChanged.connect(auto_save)
+        self.spin_minp.valueChanged.connect(auto_save)
+        self.spin_topk.valueChanged.connect(auto_save)
+        self.spin_threads.valueChanged.connect(auto_save)
+        self.spin_batch.valueChanged.connect(auto_save)
+        self.spin_ubatch.valueChanged.connect(auto_save)
+        self.cb_cache_k.currentIndexChanged.connect(auto_save)
+        self.cb_cache_v.currentIndexChanged.connect(auto_save)
+        self.chk_fa.toggled.connect(auto_save)
+        self.chk_mmap.toggled.connect(auto_save)
+        self.chk_mlock.toggled.connect(auto_save)
+        if hasattr(self, "chk_prompt_cache"):
+            self.chk_prompt_cache.toggled.connect(auto_save)
+
 
         l.addStretch()
         scroll.setWidget(tab)
@@ -1340,40 +1754,126 @@ class TrayAIApp(QMainWindow):
         strat_box.addWidget(self.cb_split_mode)
         v_gpus.addLayout(strat_box)
 
+        # Çoklu GPU Hibrit Katman / Bellek Oran Kaydırıcısı (Tensor-Split)
+        self.frame_gpu_ratio = QFrame()
+        self.frame_gpu_ratio.setStyleSheet("background: #1a1b26; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
+        v_ratio = QVBoxLayout(self.frame_gpu_ratio)
+        v_ratio.setContentsMargins(6, 4, 6, 4)
+
+        self.lbl_gpu_ratio_title = QLabel("⚖️ <b>Çoklu GPU Yük / VRAM Oranı:</b> GPU 0 (%50) ⟷ GPU 1 (%50)")
+        self.lbl_gpu_ratio_title.setStyleSheet("color: #7dcfff; font-size: 11px;")
+        v_ratio.addWidget(self.lbl_gpu_ratio_title)
+
+        self.slider_gpu_ratio = QSlider(Qt.Orientation.Horizontal)
+        self.slider_gpu_ratio.setRange(5, 95)
+        saved_ratio = self.cfg.get("gpu_split_ratio", 50)
+        self.slider_gpu_ratio.setValue(saved_ratio)
+        self.slider_gpu_ratio.valueChanged.connect(self._on_gpu_ratio_changed)
+        v_ratio.addWidget(self.slider_gpu_ratio)
+        v_gpus.addWidget(self.frame_gpu_ratio)
+
+        # Eğer sistemde birden az aktif GPU varsa kaydırıcıyı gizle
+        if len(self.hw_info.get("gpus", [])) < 2:
+            self.frame_gpu_ratio.hide()
+
+        self.gpu_vram_widgets = {}
         saved_gpu_states = self.cfg.get("enabled_gpus", {})
+
         for g in self.hw_info["gpus"]:
             dev_id = str(g["id"])
             card_row = QFrame()
-            card_row.setStyleSheet("background: #24283b; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
-            h_row = QHBoxLayout(card_row)
+            card_row.setStyleSheet("""
+                QFrame {
+                    background: #1f2335;
+                    border: 1px solid #292e42;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+            """)
+            v_card = QVBoxLayout(card_row)
+            v_card.setContentsMargins(10, 8, 10, 8)
+            v_card.setSpacing(6)
 
-            lbl_info = QLabel(
-                f"<b>{g['name']}</b><br>"
-                f"<span style='color:#7aa2f7; font-size:12px;'>VRAM: {g['vram_gb']} GB • {g['backend']} • deviceId: {g['id']}</span>"
+            # Üst Satır: Kart Adı + ID Rozeti + ON/OFF Butonu
+            h_top = QHBoxLayout()
+            lbl_title = QLabel(
+                f"<b>{g['name']}</b> "
+                f"<span style='background:#24283b; color:#7aa2f7; padding:2px 6px; border-radius:4px; font-size:11px; border:1px solid #3b4261;'>{g['backend']} (ID: {g['id']})</span>"
             )
-            lbl_info.setWordWrap(True)
-            
+            lbl_title.setWordWrap(True)
+
             btn_toggle = QPushButton()
             btn_toggle.setCheckable(True)
-            btn_toggle.setFixedSize(95, 30)
+            btn_toggle.setFixedSize(85, 28)
             is_on = saved_gpu_states.get(dev_id, True)
             btn_toggle.setChecked(is_on)
             self._update_gpu_btn_style(btn_toggle, is_on)
             btn_toggle.toggled.connect(lambda checked, b=btn_toggle, d=dev_id: self._on_gpu_toggled(b, d, checked))
-
             self.gpu_toggles[g["id"]] = btn_toggle
-            h_row.addWidget(lbl_info, 1)
-            h_row.addWidget(btn_toggle)
+
+            h_top.addWidget(lbl_title, 1)
+            h_top.addWidget(btn_toggle)
+            v_card.addLayout(h_top)
+
+            # Alt Kısım: Canlı VRAM Kullanım Sayacı ve İlerleme Çubuğu
+            h_vram_txt = QHBoxLayout()
+            lbl_vram_stat = QLabel(f"📊 VRAM Kullanımı: <b>0.00 / {g['vram_gb']:.2f} GB</b> (%0.0)")
+            lbl_vram_stat.setStyleSheet("color: #73daca; font-size: 11px;")
+            h_vram_txt.addWidget(lbl_vram_stat)
+            h_vram_txt.addStretch()
+            v_card.addLayout(h_vram_txt)
+
+            bar_vram = QProgressBar()
+            bar_vram.setRange(0, 100)
+            bar_vram.setValue(0)
+            bar_vram.setFixedHeight(8)
+            bar_vram.setTextVisible(False)
+            bar_vram.setStyleSheet("""
+                QProgressBar { background: #16161e; border-radius: 4px; border: 1px solid #292e42; }
+                QProgressBar::chunk { background: #7aa2f7; border-radius: 3px; }
+            """)
+            v_card.addWidget(bar_vram)
+
+            self.gpu_vram_widgets[g["id"]] = {
+                "bar": bar_vram,
+                "label": lbl_vram_stat,
+                "total_gb": max(0.5, g["vram_gb"])
+            }
+
             v_gpus.addWidget(card_row)
 
         l.addWidget(self.grp_gpus)
 
+        # Gelişmiş Canlı Sistem Kaynak Paneli (Dashboard)
         self.grp_mon = QGroupBox()
-        h_mon = QHBoxLayout(self.grp_mon)
-        self.lbl_mon_ram = QLabel("RAM: 0 GB")
-        self.lbl_mon_cpu = QLabel("CPU: %0.0")
-        h_mon.addWidget(self.lbl_mon_ram)
-        h_mon.addWidget(self.lbl_mon_cpu)
+        grid_mon = QGridLayout(self.grp_mon)
+        grid_mon.setContentsMargins(10, 10, 10, 10)
+        grid_mon.setSpacing(8)
+
+        # RAM Monitörü
+        self.lbl_mon_ram = QLabel(f"💾 Sistem RAM: <b>0.00 / {self.hw_info['ram_gb']} GB</b> (%0)")
+        self.lbl_mon_ram.setStyleSheet("font-size: 11px; color: #c0caf5;")
+        self.bar_mon_ram = QProgressBar()
+        self.bar_mon_ram.setRange(0, 100)
+        self.bar_mon_ram.setFixedHeight(8)
+        self.bar_mon_ram.setTextVisible(False)
+        self.bar_mon_ram.setStyleSheet("QProgressBar { background: #16161e; border-radius: 4px; } QProgressBar::chunk { background: #7aa2f7; border-radius: 3px; }")
+
+        grid_mon.addWidget(self.lbl_mon_ram, 0, 0)
+        grid_mon.addWidget(self.bar_mon_ram, 1, 0)
+
+        # CPU Monitörü
+        self.lbl_mon_cpu = QLabel("⚡ İşlemci (CPU) Yükü: <b>%0.0</b>")
+        self.lbl_mon_cpu.setStyleSheet("font-size: 11px; color: #c0caf5;")
+        self.bar_mon_cpu = QProgressBar()
+        self.bar_mon_cpu.setRange(0, 100)
+        self.bar_mon_cpu.setFixedHeight(8)
+        self.bar_mon_cpu.setTextVisible(False)
+        self.bar_mon_cpu.setStyleSheet("QProgressBar { background: #16161e; border-radius: 4px; } QProgressBar::chunk { background: #bb9af7; border-radius: 3px; }")
+
+        grid_mon.addWidget(self.lbl_mon_cpu, 0, 1)
+        grid_mon.addWidget(self.bar_mon_cpu, 1, 1)
+
         l.addWidget(self.grp_mon)
 
         l.addStretch()
@@ -1388,6 +1888,18 @@ class TrayAIApp(QMainWindow):
             btn.setText("OFF")
             btn.setStyleSheet("background-color: #414868; color: #a9b1d6; font-weight: bold; border-radius: 14px;")
 
+    def _on_gpu_ratio_changed(self, val):
+        r0 = val
+        r1 = 100 - val
+        gpus = self.hw_info.get("gpus", [])
+        g0_name = gpus[0]["name"] if len(gpus) > 0 else "GPU 0"
+        g1_name = gpus[1]["name"] if len(gpus) > 1 else "GPU 1"
+        self.lbl_gpu_ratio_title.setText(
+            f"⚖️ <b>Çoklu GPU Yük / VRAM Oranı:</b> {g0_name[:14]} (%{r0}) ⟷ {g1_name[:14]} (%{r1})"
+        )
+        self.cfg["gpu_split_ratio"] = val
+        save_json(CONFIG_FILE, self.cfg)
+
     def _on_gpu_toggled(self, btn, dev_id, checked):
         self._update_gpu_btn_style(btn, checked)
         if "enabled_gpus" not in self.cfg:
@@ -1398,11 +1910,49 @@ class TrayAIApp(QMainWindow):
     def update_resource_monitor(self):
         if not self.isVisible():
             return
+
+        # 1. RAM & CPU İzleme
         mem = psutil.virtual_memory()
         used_gb = round(mem.used / (1024**3), 2)
+        total_ram = self.hw_info.get("ram_gb", 32.0)
+        ram_pct = min(100, int((used_gb / total_ram) * 100)) if total_ram > 0 else 0
         cpu_pct = psutil.cpu_percent(interval=None)
-        self.lbl_mon_ram.setText(f"RAM: <b>{used_gb} / {self.hw_info['ram_gb']} GB</b>")
-        self.lbl_mon_cpu.setText(f"CPU: <b>%{cpu_pct}</b>")
+
+        if hasattr(self, "lbl_mon_ram"):
+            self.lbl_mon_ram.setText(f"💾 Sistem RAM: <b>{used_gb:.2f} / {total_ram:.2f} GB</b> (%{ram_pct})")
+        if hasattr(self, "bar_mon_ram"):
+            self.bar_mon_ram.setValue(ram_pct)
+
+        if hasattr(self, "lbl_mon_cpu"):
+            self.lbl_mon_cpu.setText(f"⚡ İşlemci (CPU) Yükü: <b>%{cpu_pct:.1f}</b>")
+        if hasattr(self, "bar_mon_cpu"):
+            self.bar_mon_cpu.setValue(int(cpu_pct))
+
+        # 2. Kart Bazlı Canlı VRAM Barlarını Güncelle
+        if hasattr(self, "gpu_vram_widgets"):
+            for gid, w_dict in self.gpu_vram_widgets.items():
+                live_used = read_drm_vram_used_gb(gid)
+                tot = w_dict["total_gb"]
+                pct_val = min(100.0, (live_used / tot) * 100.0) if tot > 0 else 0.0
+
+                w_dict["label"].setText(
+                    f"📊 VRAM Kullanımı: <b>{live_used:.2f} / {tot:.2f} GB</b> (%{pct_val:.1f})"
+                )
+                bar = w_dict["bar"]
+                bar.setValue(int(pct_val))
+
+                # Doluluğa göre dinamik renk
+                if pct_val >= 90:
+                    bar_color = "#f7768e" # Kırmızı (Kritik)
+                elif pct_val >= 75:
+                    bar_color = "#e0af68" # Turuncu (Yoğun)
+                else:
+                    bar_color = "#7aa2f7" # Mavi (Normal)
+
+                bar.setStyleSheet(f"""
+                    QProgressBar {{ background: #16161e; border-radius: 4px; border: 1px solid #292e42; }}
+                    QProgressBar::chunk {{ background: {bar_color}; border-radius: 3px; }}
+                """)
 
     def init_tab_server(self):
         tab = QWidget()
@@ -1468,34 +2018,113 @@ class TrayAIApp(QMainWindow):
 
         self.grp_srv_logs = QGroupBox()
         v_log = QVBoxLayout(self.grp_srv_logs)
+        v_log.setSpacing(6)
+
+        # Log Hızlı Araç Çubuğu (Toolbar)
+        h_log_tools = QHBoxLayout()
+        h_log_tools.setSpacing(6)
+
+        self.input_log_filter = QLineEdit()
+        self.input_log_filter.setPlaceholderText("🔎 Loglarda ara / filtrele (örn: vulkan, error, slot, tokens)...")
+        self.input_log_filter.setClearButtonEnabled(True)
+        self.input_log_filter.setFixedHeight(28)
+        self.input_log_filter.textChanged.connect(self.filter_server_logs)
+
+        self.chk_log_autoscroll = QCheckBox("Otomatik Kaydır")
+        self.chk_log_autoscroll.setChecked(True)
+        self.chk_log_autoscroll.setStyleSheet("font-size: 11px; color: #a9b1d6;")
+
+        btn_copy_style = """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #a9b1d6;
+                font-size: 15px;
+                border-radius: 6px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(122, 162, 247, 0.15);
+                color: #7dcfff;
+            }
+        """
+        btn_clear_style = """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #a9b1d6;
+                font-size: 15px;
+                border-radius: 6px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(247, 118, 142, 0.18);
+                color: #f7768e;
+            }
+        """
+
+        self.btn_copy_logs = QPushButton("📋")
+        self.btn_copy_logs.setFixedSize(28, 28)
+        self.btn_copy_logs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_copy_logs.setToolTip("Tüm logları panoya kopyala")
+        self.btn_copy_logs.setStyleSheet(btn_copy_style)
+        self.btn_copy_logs.clicked.connect(self.copy_all_logs)
+
+        self.btn_clear_logs = QPushButton("🧹")
+        self.btn_clear_logs.setFixedSize(28, 28)
+        self.btn_clear_logs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_logs.setToolTip("Log ekranını temizle")
+        self.btn_clear_logs.setStyleSheet(btn_clear_style)
+        self.btn_clear_logs.clicked.connect(self.clear_server_logs)
+
+        h_log_tools.addWidget(self.input_log_filter, 1)
+        h_log_tools.addWidget(self.chk_log_autoscroll)
+        h_log_tools.addWidget(self.btn_copy_logs)
+        h_log_tools.addWidget(self.btn_clear_logs)
+        v_log.addLayout(h_log_tools)
+
         self.txt_logs = QPlainTextEdit()
         self.txt_logs.setReadOnly(True)
-        self.txt_logs.setStyleSheet("background: #13141c; color: #9ece6a; font-family: monospace; font-size: 11px;")
-        v_log.addWidget(self.txt_logs)
+        self.txt_logs.setStyleSheet("""
+            QPlainTextEdit {
+                background: #13141c;
+                color: #9ece6a;
+                font-family: 'Ubuntu Mono', 'Courier New', monospace;
+                font-size: 11px;
+                border: 1px solid #292e42;
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        v_log.addWidget(self.txt_logs, 1)
         l.addWidget(self.grp_srv_logs, 1)
 
         self.tabs.addTab(tab, "Sunucu")
 
     def copy_endpoint_url(self):
-        port = self.spin_port.value()
+        port = getattr(self, 'upstream_port', self.spin_port.value() + 1)
         ip = self.local_ip if self.chk_lan.isChecked() else "127.0.0.1"
         url = f"http://{ip}:{port}/v1"
         QApplication.clipboard().setText(url)
         self.status_lbl.setText("📋 API URL Copied!")
 
     def update_endpoint_display(self):
-        port = self.spin_port.value()
-        self.cfg["port"] = port
+        # Dış dünyaya açık Gateway portu doğrudan spin_port değeridir
+        user_port = self.spin_port.value()
+        self.upstream_port = user_port + 1
+        self.cfg["port"] = user_port
         save_json(CONFIG_FILE, self.cfg)
+
         if hasattr(self, "poller"):
-            self.poller.set_port(port)
+            self.poller.set_port(self.upstream_port)
+
         if self.chk_lan.isChecked():
             self.lbl_ip.setText(
-                f"🌐 <b>LAN Endpoint:</b> http://{self.local_ip}:{port}/v1<br>"
-                f"💻 <b>Localhost:</b> http://127.0.0.1:{port}/v1"
+                f"🌐 <b>LAN Endpoint:</b> http://{self.local_ip}:{user_port}/v1<br>"
+                f"💻 <b>Localhost:</b> http://127.0.0.1:{user_port}/v1"
             )
         else:
-            self.lbl_ip.setText(f"🔒 <b>Localhost Only:</b> http://127.0.0.1:{port}/v1")
+            self.lbl_ip.setText(f"🔒 <b>Localhost Only:</b> http://127.0.0.1:{user_port}/v1")
 
     def toggle_server_service(self):
         if self.server_service_enabled:
@@ -1504,8 +2133,7 @@ class TrayAIApp(QMainWindow):
                 self.unload_current_model()
             self.lbl_srv_state.setText(self.t("srv_state_off"))
             self.btn_srv_toggle.setText(self.t("btn_srv_start"))
-            self.status_lbl.setText(self.t("srv_stopped"))
-            self.status_lbl.setStyleSheet("color: #f7768e; font-weight: bold;")
+            self.set_status_badge("stopped", self.t("srv_stopped"))
             self.btn_load_model.setEnabled(False)
             tray_ref.setIcon(get_tray_icon("stopped"))
         else:
@@ -1706,17 +2334,28 @@ class TrayAIApp(QMainWindow):
         folder = self.cfg.get("last_folder", "")
         if folder and os.path.isdir(folder):
             self.load_from_sqlite_instant(folder)
+        fn = os.path.basename(dest_path)
+        self.notify_desktop(
+            "Tray AI — İndirme Tamamlandı",
+            f"'{fn}' başarıyla indirildi ve modellere eklendi. ✅",
+            "info"
+        )
 
     def on_dl_error(self, task_id, err_msg):
         if task_id in self.active_downloads:
             _, w = self.active_downloads[task_id]
             w.lbl_state.setText(f"❌ Hata: {err_msg}")
             w.lbl_state.setStyleSheet("color: #f7768e;")
+        self.notify_desktop(
+            "Tray AI — İndirme Başarısız",
+            f"{task_id} indirilirken hata oluştu: {err_msg}",
+            "error"
+        )
 
     def apply_language(self):
         self.lbl_title.setText(f"⚡ <b>Tray AI</b> <span style='font-size:11px; color:#565f89;'>{self.t('drag_hint')}</span>")
         if not self.server_mgr.is_running():
-            self.status_lbl.setText(self.t("srv_wait_model") if self.server_service_enabled else self.t("srv_stopped"))
+            self.set_status_badge("waiting" if self.server_service_enabled else "stopped", self.t("srv_wait_model") if self.server_service_enabled else self.t("srv_stopped"))
             self.lbl_load_stage.setText(self.t("lbl_no_model"))
             self.btn_load_model.setText(self.t("btn_load"))
         else:
@@ -1786,6 +2425,7 @@ class TrayAIApp(QMainWindow):
         self.chk_offload_kv.setText(self.t("chk_kv_gpu"))
         self.chk_mmap.setText(self.t("chk_mmap"))
         self.chk_mlock.setText(self.t("chk_mlock"))
+        if hasattr(self, "chk_prompt_cache"): self.chk_prompt_cache.setText(self.t("chk_prompt_cache", "⚡ Prompt Caching (Anlık Kodlama / Snapshot)"))
         self.grp_batch.setTitle(self.t("grp_batch"))
         self.lbl_parallel.setText(self.t("lbl_parallel"))
         self.grp_spec.setTitle(self.t("grp_spec"))
@@ -1922,6 +2562,46 @@ class TrayAIApp(QMainWindow):
             return
         folder = os.path.dirname(self.selected_model_path)
         subprocess.Popen(["xdg-open", folder])
+
+    def open_root_folder_in_file_manager(self):
+        folder = self.cfg.get("last_folder", "")
+        if folder and os.path.isdir(folder):
+            subprocess.Popen(["xdg-open", folder])
+        elif self.selected_model_path and os.path.exists(self.selected_model_path):
+            subprocess.Popen(["xdg-open", os.path.dirname(self.selected_model_path)])
+
+    def delete_model_by_path(self, target_path):
+        if not target_path or not os.path.exists(target_path):
+            return
+
+        m_name = os.path.basename(target_path)
+        ans = QMessageBox.question(
+            self,
+            "Modeli Silmeyi Onayla",
+            f"<b>{m_name}</b> dosyası diskten kalıcı olarak silinecek!\n\nEmin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if ans == QMessageBox.StandardButton.Yes:
+            if self.server_mgr.is_running() and self.selected_model_path == target_path:
+                self.unload_current_model()
+
+            try:
+                os.remove(target_path)
+                if hasattr(self, "cache_mgr"):
+                    with self.cache_mgr._get_conn() as conn:
+                        conn.execute("DELETE FROM models WHERE path = ?", (target_path,))
+                
+                if target_path in self.loaded_models:
+                    del self.loaded_models[target_path]
+                
+                if self.selected_model_path == target_path:
+                    self.selected_model_path = None
+                    self.active_model_info = None
+
+                self.refresh_model_list_view()
+                QMessageBox.information(self, "Silindi", f"'{m_name}' başarıyla diskten silindi.")
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Dosya silinemedi:\n{e}")
 
     def delete_selected_model_file(self):
         if not self.selected_model_path or not os.path.exists(self.selected_model_path):
@@ -2103,24 +2783,84 @@ class TrayAIApp(QMainWindow):
         lbl_name.setStyleSheet("font-size: 13px; color: #c0caf5; font-weight: bold;")
         top_line.addWidget(lbl_name)
 
+        # Quant seviyesine göre akıllı renk kodlaması
+        q_up = str(quant).upper()
+        if "Q8" in q_up:
+            q_bg = "#e0af68" # Turuncu / Ağır
+            q_fg = "#15161e"
+        elif any(k in q_up for k in ["Q5", "Q6"]):
+            q_bg = "#7aa2f7" # Mavi / Dengeli
+            q_fg = "#15161e"
+        elif any(k in q_up for k in ["F16", "BF16", "F32"]):
+            q_bg = "#bb9af7" # Mor / Tam Hassasiyet
+            q_fg = "#15161e"
+        else:
+            q_bg = "#2ac3de" # Camgöbeği / Hızlı 4-bit
+            q_fg = "#15161e"
+
         lbl_quant = QLabel(f" {quant} ")
         lbl_quant.setStyleSheet(
-            "background: #2ac3de; color: #15161e; font-weight: bold; font-size: 10px; "
+            f"background: {q_bg}; color: {q_fg}; font-weight: bold; font-size: 10px; "
             "border-radius: 4px; padding: 1px 5px;"
         )
         top_line.addWidget(lbl_quant)
 
         lbl_format = QLabel(" GGUF ")
         lbl_format.setStyleSheet(
-            "background: #3b4261; color: #7aa2f7; font-weight: bold; font-size: 10px; "
-            "border-radius: 4px; padding: 1px 5px; border: 1px solid #7aa2f7;"
+            "background: #1f2335; color: #7aa2f7; font-weight: bold; font-size: 10px; "
+            "border-radius: 4px; padding: 1px 5px; border: 1px solid #3b4261;"
         )
         top_line.addWidget(lbl_format)
         top_line.addStretch()
 
         lbl_size = QLabel(f"<b>{info['size_gb']} GB</b>")
-        lbl_size.setStyleSheet("color: #73daca; font-size: 11px; font-weight: bold; padding-right: 4px;")
+        lbl_size.setStyleSheet("color: #73daca; font-size: 11px; font-weight: bold; padding-right: 6px;")
         top_line.addWidget(lbl_size)
+
+        # 3 Noktalı (⋮) Aksiyon Menüsü Butonu
+        btn_dots = QPushButton("⋮")
+        btn_dots.setFixedSize(24, 24)
+        btn_dots.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_dots.setToolTip("Model İşlemleri")
+        btn_dots.setStyleSheet("""
+            QPushButton {
+                background: #1f2335;
+                border: 1px solid #3b4261;
+                border-radius: 12px;
+                color: #a9b1d6;
+                font-size: 15px;
+                font-weight: bold;
+                padding-bottom: 2px;
+            }
+            QPushButton:hover {
+                background: #3b4261;
+                border-color: #7aa2f7;
+                color: #7dcfff;
+            }
+        """)
+
+        def show_item_menu(m_path=info["path"]):
+            menu = QMenu(row_widget)
+            act_load = menu.addAction("🚀 Modeli Yükle")
+            act_folder = menu.addAction("📁 Klasörde Göster")
+            act_inspect = menu.addAction("🔍 Metadata İncele")
+            menu.addSeparator()
+            act_del = menu.addAction("🗑️ Diskten Kalıcı Olarak Sil")
+
+            chosen = menu.exec(btn_dots.mapToGlobal(QPoint(0, btn_dots.height())))
+            if chosen == act_load:
+                self.select_and_apply_model(m_path)
+                self.load_selected_model()
+            elif chosen == act_folder:
+                subprocess.Popen(["xdg-open", os.path.dirname(m_path)])
+            elif chosen == act_inspect:
+                self.select_and_apply_model(m_path)
+                self.open_metadata_inspector()
+            elif chosen == act_del:
+                self.delete_model_by_path(m_path)
+
+        btn_dots.clicked.connect(lambda _, p=info["path"]: show_item_menu(p))
+        top_line.addWidget(btn_dots)
 
         row_layout.addLayout(top_line)
 
@@ -2159,15 +2899,85 @@ class TrayAIApp(QMainWindow):
         self.spin_ctx.setRange(512, target_max)
         self.recalculate_memory_estimate()
 
-    def on_model_selected(self, item):
-        path = item.data(Qt.ItemDataRole.UserRole)
+    def save_current_model_custom_config(self):
+        if not self.selected_model_path:
+            return
+        if "per_model_cfg" not in self.cfg:
+            self.cfg["per_model_cfg"] = {}
+
+        m_cfg = {
+            "ngl": self.spin_ngl.value(),
+            "ctx": self.spin_ctx.value(),
+            "temp": self.spin_temp.value(),
+            "topp": self.spin_topp.value(),
+            "minp": self.spin_minp.value(),
+            "topk": self.spin_topk.value(),
+            "threads": self.spin_threads.value(),
+            "threads_batch": self.spin_threads_batch.value(),
+            "batch": self.spin_batch.value(),
+            "ubatch": self.spin_ubatch.value(),
+            "cache_k": self.cb_cache_k.currentText(),
+            "cache_v": self.cb_cache_v.currentText(),
+            "fa": self.chk_fa.isChecked(),
+            "mmap": self.chk_mmap.isChecked(),
+            "mlock": self.chk_mlock.isChecked(),
+            "prompt_cache": self.chk_prompt_cache.isChecked() if hasattr(self, "chk_prompt_cache") else True,
+            "rep_pen": self.spin_rep_pen.value(),
+            "rope_scaling": self.cb_rope_scaling.currentText(),
+            "custom_flags": self.input_custom_flags.text().strip()
+        }
+        self.cfg["per_model_cfg"][self.selected_model_path] = m_cfg
+        self.cfg["last_selected_model"] = self.selected_model_path
+        save_json(CONFIG_FILE, self.cfg)
+
+    def restore_model_custom_config(self, path):
+        saved = self.cfg.get("per_model_cfg", {}).get(path, {})
+        if not saved:
+            return False
+
+        if "ngl" in saved: self.spin_ngl.setValue(saved["ngl"])
+        if "ctx" in saved: self.spin_ctx.setValue(saved["ctx"])
+        if "temp" in saved: self.spin_temp.setValue(saved["temp"])
+        if "topp" in saved: self.spin_topp.setValue(saved["topp"])
+        if "minp" in saved: self.spin_minp.setValue(saved["minp"])
+        if "topk" in saved: self.spin_topk.setValue(saved["topk"])
+        if "threads" in saved: self.spin_threads.setValue(saved["threads"])
+        if "threads_batch" in saved: self.spin_threads_batch.setValue(saved["threads_batch"])
+        if "batch" in saved: self.spin_batch.setValue(saved["batch"])
+        if "ubatch" in saved: self.spin_ubatch.setValue(saved["ubatch"])
+        if "cache_k" in saved: self.cb_cache_k.setCurrentText(saved["cache_k"])
+        if "cache_v" in saved: self.cb_cache_v.setCurrentText(saved["cache_v"])
+        if "fa" in saved: self.chk_fa.setChecked(saved["fa"])
+        if "mmap" in saved: self.chk_mmap.setChecked(saved["mmap"])
+        if "mlock" in saved: self.chk_mlock.setChecked(saved["mlock"])
+        if "prompt_cache" in saved and hasattr(self, "chk_prompt_cache"):
+            self.chk_prompt_cache.setChecked(saved["prompt_cache"])
+        if "rep_pen" in saved: self.spin_rep_pen.setValue(saved["rep_pen"])
+        if "rope_scaling" in saved: self.cb_rope_scaling.setCurrentText(saved["rope_scaling"])
+        if "custom_flags" in saved: self.input_custom_flags.setText(saved["custom_flags"])
+        return True
+
+    def select_and_apply_model(self, path):
         if not path or path not in self.loaded_models:
             return
+
+        # Önceki modelde yapılan değişiklikleri kaydet
+        if getattr(self, "selected_model_path", None) and self.selected_model_path != path:
+            self.save_current_model_custom_config()
 
         self.selected_model_path = path
         info = self.loaded_models[path]
         self.active_model_info = info
         extra_m = info.get("extra_meta", {})
+
+        # Listede bu modeli görsel olarak seç
+        for idx in range(self.list_models.count()):
+            it = self.list_models.item(idx)
+            if it and it.data(Qt.ItemDataRole.UserRole) == path:
+                self.list_models.blockSignals(True)
+                self.list_models.setCurrentItem(it)
+                self.list_models.blockSignals(False)
+                break
 
         mtp_badge = self.t("badge_mtp_active").format(layers=info.get('mtp_layers', 1)) if info.get("has_mtp") else self.t("badge_mtp_none")
         yarn_badge = self.t("badge_yarn_active") if info.get("has_yarn") else self.t("badge_yarn_none")
@@ -2206,17 +3016,20 @@ class TrayAIApp(QMainWindow):
         self.slider_ctx.setRange(512, max_effective_ctx)
         self.spin_ctx.setRange(512, max_effective_ctx)
 
-        saved_m_cfg = self.cfg.get("per_model_cfg", {}).get(path, {})
-        self.slider_ngl.setValue(min(layers, saved_m_cfg.get("ngl", layers)))
-        self.slider_ctx.setValue(min(max_effective_ctx, saved_m_cfg.get("ctx", base_ctx)))
-
+        # Varsayılan profil değerlerini ata
         self.spin_rope_base.setValue(float(extra_m.get("rope_freq_base", 10000.0)))
         self.spin_rope_scale.setValue(rope_scale)
-
         self.spin_temp.setValue(float(info.get("recommended_temp", 0.70)))
         self.spin_topp.setValue(float(info.get("recommended_topp", 0.90)))
         self.spin_minp.setValue(float(info.get("recommended_minp", 0.05)))
         self.spin_topk.setValue(int(info.get("recommended_top_k", 40)))
+        self.slider_ngl.setValue(layers)
+        self.slider_ctx.setValue(base_ctx)
+
+        # Eğer kullanıcı bu modele özel ayar yapmışsa onları geri yükle
+        has_custom = self.restore_model_custom_config(path)
+        if not has_custom:
+            self.cfg.setdefault("per_model_cfg", {})[path] = {"ngl": layers, "ctx": base_ctx}
 
         has_real_mtp = bool(info.get("has_mtp", False))
         self.chk_mtp.setEnabled(True)
@@ -2227,6 +3040,8 @@ class TrayAIApp(QMainWindow):
             self.chk_mtp.setText(f"⚡ MTP ({mtp_l} Katman Spekülatif Tahmin) Aktif — [{reason}]")
             self.chk_mtp.setStyleSheet("color: #9ece6a; font-weight: bold;")
             self.chk_enable_draft.setChecked(False)
+            self.spin_draft_max.setEnabled(True)
+            self.spin_draft_max.setValue(3)
         else:
             self.chk_mtp.setChecked(False)
             self.chk_mtp.setText(self.t("chk_mtp_none"))
@@ -2243,6 +3058,47 @@ class TrayAIApp(QMainWindow):
 
         self.recalculate_memory_estimate()
 
+    def on_gateway_request_switch_model(self, model_id):
+        models = self.get_gateway_models_list()
+        target_path = None
+        for m in models:
+            p = m["path"]
+            clean_id = os.path.splitext(m["filename"])[0]
+            if model_id.lower() == clean_id.lower() or model_id.lower() in clean_id.lower() or model_id.lower() in p.lower():
+                target_path = p
+                if p not in self.loaded_models:
+                    self.loaded_models[p] = m
+                break
+
+        if target_path and os.path.exists(target_path):
+            self.select_and_apply_model(target_path)
+            self.load_selected_model()
+
+    def on_model_selected(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        self.select_and_apply_model(path)
+
+    def get_current_active_model_id(self):
+        if self.selected_model_path and self.server_mgr.is_running():
+            return os.path.splitext(os.path.basename(self.selected_model_path))[0]
+        return ""
+
+    def get_gateway_models_list(self):
+        models_dict = {}
+        for p, m in self.loaded_models.items():
+            if os.path.exists(p):
+                models_dict[p] = m
+
+        try:
+            all_cached = self.cache_mgr.get_all_cached_models()
+            for m in all_cached:
+                p = m["path"]
+                if p not in models_dict and os.path.exists(p) and "mmproj" not in os.path.basename(p).lower():
+                    models_dict[p] = m
+        except Exception:
+            pass
+        return list(models_dict.values())
+
     def load_selected_model(self):
         if not self.server_service_enabled:
             return
@@ -2252,13 +3108,12 @@ class TrayAIApp(QMainWindow):
         engine = "llama-server"
         ngl = self.spin_ngl.value()
         ctx = self.spin_ctx.value()
-        port = self.spin_port.value()
+        port = getattr(self, 'upstream_port', self.spin_port.value() + 1)
         host = "0.0.0.0" if self.chk_lan.isChecked() else "127.0.0.1"
 
         if "per_model_cfg" not in self.cfg:
             self.cfg["per_model_cfg"] = {}
-        self.cfg["per_model_cfg"][self.selected_model_path] = {"ngl": ngl, "ctx": ctx}
-        save_json(CONFIG_FILE, self.cfg)
+        self.save_current_model_custom_config()
 
         extra = [
             "-t", str(self.spin_threads.value()),
@@ -2313,6 +3168,13 @@ class TrayAIApp(QMainWindow):
                 extra.extend(["--split-mode", "none", "--main-gpu", "0"])
             else:
                 extra.extend(["--split-mode", self.cb_split_mode.currentData()])
+                # 2 GPU aktifse kullanıcı tanımlı oranla --tensor-split ekle
+                if len(active_gpu_ids) == 2:
+                    ratio = getattr(self, "slider_gpu_ratio", None)
+                    val = ratio.value() if ratio else 50
+                    r0 = max(1, val)
+                    r1 = max(1, 100 - val)
+                    extra.extend(["-ts", f"{r0},{r1}"])
 
         if self.cb_thinking_effort.isEnabled():
             eff_idx = self.cb_thinking_effort.currentIndex()
@@ -2358,19 +3220,40 @@ class TrayAIApp(QMainWindow):
         if mmproj_path and os.path.exists(mmproj_path):
             extra.extend(["--mmproj", mmproj_path])
 
+        # Model Alias (Uzak istemcilerde dosya yolu yerine temiz isim görünmesi için)
+        clean_model_id = os.path.splitext(os.path.basename(self.selected_model_path))[0]
+        extra.extend(["--alias", clean_model_id])
+
+        # Prompt Caching llama-server tarafından dahili bellek slotlarında yerleşik (in-memory prefix-cache) olarak yürütülür.
+
+        # Spekülatif Çıkarım / MTP Ayarları (LM Studio Standartları)
+        draft_val = str(self.spin_draft_max.value()) if hasattr(self, "spin_draft_max") and self.spin_draft_max.isEnabled() else "3"
         if self.chk_mtp.isChecked():
-            extra.extend(["--spec-draft-n-max", "2", "--spec-draft-n-min", "1"])
+            extra.extend([
+                "--spec-type", "draft-mtp",
+                "--spec-draft-n-max", draft_val,
+                "--spec-draft-n-min", "0",
+                "--spec-draft-p-min", "0",
+                "--kv-unified"
+            ])
 
         if self.chk_enable_draft.isChecked() and self.selected_draft_path:
             extra.extend(["-md", self.selected_draft_path, "--spec-draft-n-max", str(self.spin_draft_max.value())])
+
+        # LM Studio Seviyesinde Performans Bayrakları (Flash Attention, Micro-batch, Fiziksel Thread)
+        if "-fa" not in extra and "--flash-attn" not in extra:
+            extra.append("-fa")
+        if "-ub" not in extra and "--ubatch" not in extra:
+            extra.extend(["-ub", "512"])
+        if "-t" not in extra and "--threads" not in extra:
+            extra.extend(["-t", "8"])
 
         self.txt_logs.clear()
         self.poller.set_port(port)
         self.poller.reset_ready()
         self.load_progress_bar.setValue(5)
         self.lbl_load_stage.setText("⏳ RAM / VRAM...")
-        self.status_lbl.setText(self.t("srv_loading"))
-        self.status_lbl.setStyleSheet("color: #e0af68; font-weight: bold;")
+        self.set_status_badge("loading", self.t("srv_loading"))
         self.btn_drop_cache.setEnabled(False)
         tray_ref.setIcon(get_tray_icon("loading"))
 
@@ -2412,12 +3295,47 @@ class TrayAIApp(QMainWindow):
         self.btn_drop_cache.setEnabled(True)
         self.btn_load_model.setText(self.t("btn_load"))
         if self.server_service_enabled:
-            self.status_lbl.setText(self.t("srv_unloaded"))
-            self.status_lbl.setStyleSheet("color: #7dcfff; font-weight: bold;")
+            self.set_status_badge("unloaded", self.t("srv_unloaded"))
             tray_ref.setIcon(get_tray_icon("ready"))
 
+    def clear_server_logs(self):
+        if hasattr(self, "_raw_log_lines"):
+            self._raw_log_lines.clear()
+        self.txt_logs.clear()
+
+    def copy_all_logs(self):
+        text = self.txt_logs.toPlainText()
+        if text:
+            QApplication.clipboard().setText(text)
+            self.set_status_badge("ready" if self.server_mgr.is_running() else "waiting", "📋 Loglar Kopyalandı!")
+            QTimer.singleShot(2000, lambda: self.set_status_badge("ready" if self.server_mgr.is_running() else "waiting", self.t("srv_ready") if self.server_mgr.is_running() else self.t("srv_wait_model")))
+
+    def filter_server_logs(self):
+        if not hasattr(self, "_raw_log_lines"):
+            return
+        query = self.input_log_filter.text().strip().lower()
+        self.txt_logs.clear()
+        if not query:
+            self.txt_logs.setPlainText("\n".join(self._raw_log_lines))
+        else:
+            matched = [line for line in self._raw_log_lines if query in line.lower()]
+            self.txt_logs.setPlainText("\n".join(matched))
+
+        if self.chk_log_autoscroll.isChecked():
+            self.txt_logs.verticalScrollBar().setValue(self.txt_logs.verticalScrollBar().maximum())
+
     def on_server_log(self, line):
-        self.txt_logs.appendPlainText(line)
+        if not hasattr(self, "_raw_log_lines"):
+            self._raw_log_lines = []
+        self._raw_log_lines.append(line)
+        if len(self._raw_log_lines) > 3000:
+            self._raw_log_lines.pop(0)
+
+        query = self.input_log_filter.text().strip().lower() if hasattr(self, "input_log_filter") else ""
+        if not query or query in line.lower():
+            self.txt_logs.appendPlainText(line)
+            if hasattr(self, "chk_log_autoscroll") and self.chk_log_autoscroll.isChecked():
+                self.txt_logs.verticalScrollBar().setValue(self.txt_logs.verticalScrollBar().maximum())
 
     def on_load_progress(self, pct, stage_text):
         if pct > self.load_progress_bar.value():
@@ -2425,13 +3343,41 @@ class TrayAIApp(QMainWindow):
             self.lbl_load_stage.setText(f"⏳ {stage_text} (%{pct})")
 
     def on_health_loading_tick(self):
+        target_gb = self.active_model_info.get("size_gb", 0.0) if self.active_model_info else 0.0
+        proc = getattr(self.server_mgr, "process", None)
+        
+        if proc and proc.poll() is None and target_gb > 0:
+            try:
+                p = psutil.Process(proc.pid)
+                # RSS (fiziksel RAM) ve VMS tüketimi
+                rss_gb = p.memory_info().rss / (1024 ** 3)
+                
+                # Model ağırlıklarının aktarılma yüzdesi (küsuratlı)
+                pct_float = min(99.0, (rss_gb / target_gb) * 100.0)
+                int_pct = int(pct_float)
+                
+                if int_pct > self.load_progress_bar.value():
+                    self.load_progress_bar.setValue(int_pct)
+                
+                self.lbl_load_stage.setText(
+                    f"⏳ RAM/VRAM: {rss_gb:.2f} / {target_gb:.2f} GB (%{pct_float:.2f})"
+                )
+                return
+            except Exception:
+                pass
+
+        # Geriye dönük yedek mantık
         cur = self.load_progress_bar.value()
-        if 0 < cur < 95:
-            new_val = min(95, cur + 4)
-            self.load_progress_bar.setValue(new_val)
-            self.lbl_load_stage.setText(f"⏳ RAM/VRAM Offloading... (%{new_val})")
+        if cur < 95:
+            self.load_progress_bar.setValue(cur + 1)
+            self.lbl_load_stage.setText(f"⏳ RAM/VRAM Offloading... (%{cur + 1})")
 
     def on_health_confirmed_ready(self):
+        # Uygulama kendi bir model başlatmadıysa yetim sinyallere aldanma
+        if not self.server_mgr.is_running():
+            self.poller.reset_ready()
+            return
+
         if self.server_mgr.reader_thread:
             self.server_mgr.reader_thread.mark_ready_external()
         else:
@@ -2442,9 +3388,9 @@ class TrayAIApp(QMainWindow):
         m_name = os.path.basename(self.selected_model_path) if self.selected_model_path else "Model"
         self.lbl_load_stage.setText(f"✅ {m_name} (%100)")
         self.lbl_tel_phase.setText(self.t("tel_waiting"))
-        self.status_lbl.setText(self.t("srv_ready"))
-        self.status_lbl.setStyleSheet("color: #9ece6a; font-weight: bold;")
+        self.set_status_badge("ready", self.t("srv_ready"))
         self.btn_drop_cache.setEnabled(False)
+        self.btn_unload_model.setEnabled(True)
         tray_ref.setIcon(get_tray_icon("active"))
 
     def on_tool_call_log(self, msg):
@@ -2497,8 +3443,7 @@ class TrayAIApp(QMainWindow):
         self.btn_unload_model.setEnabled(False)
         if self.load_progress_bar.value() < 100 and code != 0:
             self.lbl_load_stage.setText(f"❌ Code: {code} (Check Server Logs)")
-            self.status_lbl.setText(self.t("srv_error"))
-            self.status_lbl.setStyleSheet("color: #f7768e; font-weight: bold;")
+            self.set_status_badge("error", self.t("srv_error"))
             tray_ref.setIcon(get_tray_icon("stopped"))
 
 
@@ -2577,6 +3522,7 @@ class MainRunner:
 
     def exit_app(self):
         self.window.poller.stop()
+        if hasattr(self.window, 'api_gateway'): self.window.api_gateway.stop()
         if self.window.server_mgr.is_running():
             self.window.server_mgr.stop_model()
         self.app.quit()

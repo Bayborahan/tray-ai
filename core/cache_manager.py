@@ -98,6 +98,15 @@ class CacheManager:
             ))
             conn.commit()
 
+    def get_all_cached_models(self):
+        results = []
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM models")
+            for row in cursor.fetchall():
+                results.append(self._row_to_dict(row))
+        return results
+
     def get_all_by_folder(self, folder):
         results = []
         with self._get_conn() as conn:

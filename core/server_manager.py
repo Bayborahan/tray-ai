@@ -1,9 +1,19 @@
+import ctypes
 import subprocess
 import os
 import signal
 import time
 import requests
 from PyQt6.QtCore import QThread, pyqtSignal
+
+
+def _set_pdeathsig():
+    # PR_SET_PDEATHSIG = 1, SIGKILL = 9 (Python çökerse alt süreç anında ölür)
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.prctl(1, 9)
+    except Exception:
+        pass
 
 class ServerLogReader(QThread):
     log_line = pyqtSignal(str)
@@ -130,12 +140,17 @@ class TelemetryPoller(QThread):
             nt = {}
 
         n_decoded = nt.get("n_decoded", s.get("n_decoded", 0))
-        n_prompt = s.get("n_prompt_tokens", s.get("n_prompt_tokens_processed", 0))
+        total_prompt = s.get("n_prompt_tokens", 0)
+        
+        # Gerçek işlenen prompt token miktarı
+        n_prompt_proc = s.get("n_prompt_tokens_processed", None)
+        n_past = s.get("n_past", 0)
+        if n_prompt_proc is None:
+            n_prompt_proc = n_past
 
         tokens_list = s.get("tokens", [])
         tokens_len = len(tokens_list) if isinstance(tokens_list, list) else 0
-        n_past = s.get("n_past", 0)
-        actual_ctx_used = max(n_past, tokens_len, n_prompt + n_decoded)
+        actual_ctx_used = max(n_past, tokens_len, total_prompt + n_decoded)
 
         timings = s.get("timings", {})
         pp_speed = timings.get("prompt_per_second", 0.0)
@@ -150,7 +165,7 @@ class TelemetryPoller(QThread):
             "n_ctx": n_ctx,
             "n_past": actual_ctx_used,
             "n_decoded": n_decoded,
-            "n_prompt": n_prompt,
+            "n_prompt": total_prompt,
             "prompt_pct": 100,
             "pp_speed": pp_speed,
             "tg_speed": tg_speed,
@@ -164,13 +179,15 @@ class TelemetryPoller(QThread):
 
             elapsed = max(0.1, time.time() - self._gen_start_time)
 
-            if state == 1 or (n_decoded == 0 and actual_ctx_used <= n_prompt):
+            # Prompt değerlendirme aşaması: Token üretimi başlamamış ve işlenen token hedef prompttan az
+            if n_decoded == 0 and (total_prompt == 0 or n_prompt_proc < total_prompt):
                 info["phase"] = "prompt"
-                if n_prompt > 0 and actual_ctx_used > 0:
-                    info["prompt_pct"] = min(99, int((actual_ctx_used / n_prompt) * 100))
+                if total_prompt > 0:
+                    pct = int((n_prompt_proc / total_prompt) * 100)
+                    info["prompt_pct"] = max(1, min(99, pct))
                 else:
                     simulated_pct = int(95 * (1.0 - (0.5 ** (elapsed / 2.5))))
-                    info["prompt_pct"] = max(10, min(95, simulated_pct))
+                    info["prompt_pct"] = max(5, min(95, simulated_pct))
             else:
                 info["phase"] = "eval"
                 info["prompt_pct"] = 100
@@ -274,8 +291,7 @@ class ServerManager:
             bufsize=1,
             cwd=self.engines_dir,
             env=run_env,
-            start_new_session=True
-        )
+            start_new_session=True, preexec_fn=_set_pdeathsig)
 
         self.reader_thread = ServerLogReader(self.process, port=port, total_layers=total_layers)
         self.reader_thread.start()

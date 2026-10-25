@@ -29,9 +29,21 @@ class EngineVersionChecker(QThread):
                 timeout=3,
                 env=env
             )
-            m = re.search(r"version:\s*(\d+)\s*\(([a-f0-9]+)\)", out)
-            if m:
-                return f"b{m.group(1)} ({m.group(2)})"
+            # Yeni format: version: 0.7.0-dev (build 1, commit df9beac)
+            m_new = re.search(r"version:\s*([^\s(]+)\s*\((?:build\s*(\d+),?\s*)?(?:commit\s*)?([a-f0-9]+)\)", out)
+            if m_new:
+                ver_tag = m_new.group(1)
+                build_num = m_new.group(2)
+                commit_hash = m_new.group(3)
+                if build_num and int(build_num) > 1:
+                    return f"b{build_num} ({commit_hash})"
+                return f"v{ver_tag} ({commit_hash})"
+
+            # Eski format: version: 4850 (df9beac)
+            m_old = re.search(r"version:\s*(\d+)\s*\(([a-f0-9]+)\)", out)
+            if m_old:
+                return f"b{m_old.group(1)} ({m_old.group(2)})"
+
             m2 = re.search(r"b(\d{4,5})", out)
             if m2:
                 return f"b{m2.group(1)}"
@@ -162,7 +174,7 @@ class EngineUpdateWorker(QThread):
         build_dir = "/tmp/tray_ai_llama_build"
         shutil.rmtree(build_dir, ignore_errors=True)
 
-        repo_url = "https://github.com/ggml-org/llama.cpp.git"
+        repo_url = getattr(self, "turbo_repo", None) or "https://github.com/ggml-org/llama.cpp.git"
 
         # Eğer yerel bir klasör yolu verildiyse (örn: /home/anonymous/turboquant-llama.cpp) doğrudan oradan kopyala/derle
         if os.path.isdir(repo_url):
@@ -170,8 +182,8 @@ class EngineUpdateWorker(QThread):
             shutil.copytree(repo_url, build_dir, symlinks=True)
         else:
             self.progress_msg.emit(10, f"Kaynak kod çekiliyor ({repo_url}) -> Hedef: {dest_bin_name}...")
-            clone_cmd = ["git", "clone", "--depth", "1"]
-            if is_turbo and self.turbo_branch:
+            clone_cmd = ["git", "clone", "--depth", "1", "--tags"]
+            if getattr(self, "turbo_branch", None):
                 clone_cmd.extend(["-b", self.turbo_branch])
             clone_cmd.extend([repo_url, build_dir])
             subprocess.run(clone_cmd, check=True)
@@ -206,7 +218,12 @@ class EngineUpdateWorker(QThread):
         # Derlenen ikiliyi tam olarak seçilen hedef adıyla (llama-server-turboquant veya llama-server) kaydet!
         built_bin = os.path.join(build_dir, "build", "bin", "llama-server")
         if not os.path.exists(built_bin):
-            raise FileNotFoundError("Derleme sonrası ikili dosya bulunamadı!")
+            for r, _, f_list in os.walk(os.path.join(build_dir, "build")):
+                if "llama-server" in f_list and not os.path.islink(os.path.join(r, "llama-server")):
+                    built_bin = os.path.join(r, "llama-server")
+                    break
+        if not os.path.exists(built_bin):
+            raise FileNotFoundError("Derleme sonrası llama-server ikili dosyası bulunamadı!")
 
         final_dest = os.path.join(self.engines_dir, dest_bin_name)
         shutil.copy2(built_bin, final_dest)

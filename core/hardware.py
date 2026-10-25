@@ -146,3 +146,20 @@ def _read_drm_vram_gb(card_idx, fallback_ram, is_igpu):
     except:
         pass
     return round(fallback_ram * 0.5, 2) if is_igpu else 0.0
+
+def read_drm_vram_used_gb(card_idx):
+    vram_used_file = f"/sys/class/drm/card{card_idx}/device/mem_info_vram_used"
+    gtt_used_file = f"/sys/class/drm/card{card_idx}/device/mem_info_gtt_used"
+    try:
+        if os.path.exists(vram_used_file):
+            with open(vram_used_file, "r") as f:
+                used_b = int(f.read().strip())
+                return round(used_b / (1024**3), 2)
+        elif os.path.exists(gtt_used_file):
+            with open(gtt_used_file, "r") as f:
+                used_b = int(f.read().strip())
+                return round(used_b / (1024**3), 2)
+    except Exception:
+        pass
+    return 0.0
+
