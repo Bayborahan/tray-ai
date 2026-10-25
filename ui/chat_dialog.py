@@ -150,7 +150,7 @@ class ChatTesterDialog(QDialog):
         self.chat_display = QTextBrowser()
         self.chat_display.setStyleSheet(
             "QTextBrowser { background: #16161e; border: 1px solid #292e42; border-radius: 8px; "
-            "padding: 10px; font-family: Ubuntu, Segoe UI, sans-serif; font-size: 13px; color: #c0caf5; }"
+            "padding: 10px; font-family: 'Ubuntu', 'Segoe UI', 'Noto Color Emoji', sans-serif; font-size: 13px; color: #c0caf5; }"
         )
         layout.addWidget(self.chat_display, 1)
 
