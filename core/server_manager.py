@@ -44,15 +44,14 @@ class ServerLogReader(QThread):
                 low = clean.lower()
 
                 if not self._is_ready:
-                    if "llama_model_loader" in low or "kv" in low or "meta" in low:
-                        pct = min(35, pct + 2)
-                        self.load_progress.emit(pct, "Model yapısı ve metadata okunuyor...")
-                    elif "load_tensors" in low or "offloaded" in low or "buffer size" in low or "vulkan" in low:
-                        pct = min(85, pct + 8)
-                        self.load_progress.emit(pct, "Tensorlar RAM / VRAM'e aktarılıyor...")
-                    elif "llama_context" in low or "kv_cache" in low or "flash_attn" in low:
-                        pct = 92
-                        self.load_progress.emit(pct, "Context ve K/V Cache ayrılıyor...")
+                    if "llama_model_loader" in low or "meta" in low:
+                        self.load_progress.emit(10, "Model mimarisi ve metaveriler inceleniyor...")
+                    elif "threadpool init" in low or "init: llama threadpool" in low:
+                        self.load_progress.emit(86, "İş parçacıkları (Threadpool) yapılandırılıyor...")
+                    elif "loaded multimodal model" in low or "mmproj" in low:
+                        self.load_progress.emit(90, "Multimodal (Görsel/Ses) adaptörü bağlandı...")
+                    elif "initializing, n_slots" in low or "n_ctx_slot" in low:
+                        self.load_progress.emit(94, "Bağlam (KV Cache) ayrılıyor...")
                     elif any(k in low for k in ["server is listening", "http server", "main: model loaded", "starting the main loop", "listening on"]):
                         self._is_ready = True
                         self.load_progress.emit(100, "Model yüklendi ve kullanıma hazır!")

@@ -16,7 +16,7 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
     def _send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin, *")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def do_OPTIONS(self):
@@ -28,13 +28,11 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         clean_path = parsed.path.rstrip("/").lower()
 
-        # 1. Ollama /api/version
         if clean_path in ("/api/version", "/version"):
             resp = json.dumps({"version": "0.5.4"}).encode("utf-8")
             self._send_json_response(200, resp)
             return
 
-        # 2. OpenAI /v1/models ve /models
         if clean_path in ("/v1/models", "/models"):
             models_list = self.server.gateway_ref.get_all_models_callback()
             active_id = self.server.gateway_ref.get_active_model_id_callback()
@@ -57,7 +55,6 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             self._send_json_response(200, resp)
             return
 
-        # 3. Ollama /api/tags
         if clean_path in ("/api/tags", "/tags"):
             models_list = self.server.gateway_ref.get_all_models_callback()
             ollama_models = []
@@ -85,9 +82,8 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             self._send_json_response(200, resp)
             return
 
-        # 4. Basit Sağlık Denetimi
         if clean_path in ("", "/health"):
-            resp = b'{"status": "ok", "service": "Tray-AI Gateway (OpenAI & Ollama Dual Protocol)"}'
+            resp = b'{"status": "ok", "service": "Tray-AI Gateway"}'
             self._send_json_response(200, resp)
             return
 
@@ -100,17 +96,15 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         clean_path = parsed.path.rstrip("/").lower()
 
-        # Ollama /api/show (Model detayları)
         if clean_path in ("/api/show", "/show"):
             try:
                 p_data = json.loads(body.decode("utf-8")) if body else {}
                 m_name = p_data.get("name", p_data.get("model", ""))
                 if m_name.endswith(":latest"):
                     m_name = m_name[:-7]
-                
                 resp = json.dumps({
                     "modelfile": f"# Modelfile for {m_name}\nFROM {m_name}",
-                    "parameters": "temperature 0.7\ntop_p 0.9",
+                    "parameters": "temperature 0.7",
                     "template": "{{ .Prompt }}",
                     "details": {"format": "gguf", "family": "llama"}
                 }).encode("utf-8")
@@ -119,12 +113,10 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Ollama /api/chat ve /api/generate İstekleri
         if clean_path in ("/api/chat", "/api/generate"):
             self._handle_ollama_inference(clean_path, body)
             return
 
-        # OpenAI /v1/chat/completions ve /v1/completions İstekleri
         if clean_path in ("/v1/chat/completions", "/chat/completions", "/v1/completions", "/completions"):
             self._handle_openai_inference(clean_path, body)
             return
@@ -141,13 +133,11 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
         model_name = raw_model[:-7] if raw_model.endswith(":latest") else raw_model
         is_stream = payload.get("stream", True)
 
-        # Modeli gerekirse otomatik yüklet
         self._ensure_model_loaded(model_name)
 
         upstream_port = self.server.gateway_ref.upstream_port
         iso_now = datetime.now(timezone.utc).isoformat()
 
-        # Ollama formatını OpenAI formatına dönüştür
         if path == "/api/generate":
             prompt_text = payload.get("prompt", "")
             openai_payload = {
@@ -162,19 +152,18 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
                 "stream": is_stream
             }
 
-        # İsteğe bağlı sampling parametrelerini aktar
         options = payload.get("options", {})
-        if "temperature" in options: openai_payload["temperature"] = options["temperature"]
-        if "top_p" in options: openai_payload["top_p"] = options["top_p"]
-        if "top_k" in options: openai_payload["top_k"] = options["top_k"]
+        for opt in ["temperature", "top_p", "top_k"]:
+            if opt in options:
+                openai_payload[opt] = options[opt]
 
         upstream_url = f"http://127.0.0.1:{upstream_port}/v1/chat/completions"
 
         if is_stream:
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Transfer-Encoding", "chunked")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
             self._send_cors_headers()
             self.end_headers()
 
@@ -183,7 +172,7 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
                 for line in resp.iter_lines():
                     if not line:
                         continue
-                    line_str = line.decode("utf-8").strip()
+                    line_str = line.decode("utf-8", errors="replace").strip()
                     if line_str.startswith("data: "):
                         data_part = line_str[6:]
                         if data_part == "[DONE]":
@@ -196,22 +185,21 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
                                     nd_chunk = {"model": raw_model, "created_at": iso_now, "response": delta_content, "done": False}
                                 else:
                                     nd_chunk = {"model": raw_model, "created_at": iso_now, "message": {"role": "assistant", "content": delta_content}, "done": False}
-                                self.wfile.write((json.dumps(nd_chunk, ensure_ascii=False) + "\n").encode("utf-8"))
-                                self.wfile.flush()
+                                data_bytes = (json.dumps(nd_chunk, ensure_ascii=False) + "\n").encode("utf-8")
+                                self._write_http_chunk(data_bytes)
                         except Exception:
                             pass
 
-                # Bitiş paketi (done: true)
                 if path == "/api/generate":
-                    done_chunk = {"model": raw_model, "created_at": iso_now, "response": "", "done": True, "total_duration": 1000000}
+                    done_chunk = {"model": raw_model, "created_at": iso_now, "response": "", "done": True}
                 else:
-                    done_chunk = {"model": raw_model, "created_at": iso_now, "message": {"role": "assistant", "content": ""}, "done": True, "total_duration": 1000000}
-                self.wfile.write((json.dumps(done_chunk, ensure_ascii=False) + "\n").encode("utf-8"))
+                    done_chunk = {"model": raw_model, "created_at": iso_now, "message": {"role": "assistant", "content": ""}, "done": True}
+                self._write_http_chunk((json.dumps(done_chunk, ensure_ascii=False) + "\n").encode("utf-8"))
+                self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
-            except Exception as e:
+            except Exception:
                 pass
         else:
-            # Stream kapalıysa tek seferde JSON dön
             try:
                 resp = requests.post(upstream_url, json=openai_payload, timeout=300)
                 res_data = resp.json()
@@ -244,10 +232,9 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             self.server.gateway_ref.log_signal.emit(f"🔄 Model Hazırlanıyor: {requested_model}")
             self.server.gateway_ref.sig_switch_model.emit(requested_model)
             
-            # Model hazır olana kadar bekle
             start_t = time.time()
             time.sleep(1.0)
-            while time.time() - start_t < 90:
+            while time.time() - start_t < 120:
                 if self._check_engine_ready(upstream_port):
                     return
                 time.sleep(0.5)
@@ -258,6 +245,13 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             return r.status_code == 200 and r.json().get("status") == "ok"
         except Exception:
             return False
+
+    def _write_http_chunk(self, data):
+        if not data:
+            return
+        chunk_header = f"{len(data):X}\r\n".encode("ascii")
+        self.wfile.write(chunk_header + data + b"\r\n")
+        self.wfile.flush()
 
     def _proxy_request(self, method, body=None):
         upstream_port = self.server.gateway_ref.upstream_port
@@ -274,21 +268,49 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
                 timeout=300
             )
 
+            is_streaming = (
+                "text/event-stream" in resp.headers.get("content-type", "").lower() or
+                resp.headers.get("transfer-encoding", "").lower() == "chunked" or
+                "application/x-ndjson" in resp.headers.get("content-type", "").lower()
+            )
+
+            cors_keys = {
+                "access-control-allow-origin", "access-control-allow-methods",
+                "access-control-allow-headers", "access-control-max-age",
+                "access-control-allow-credentials", "access-control-expose-headers"
+            }
+
             self.send_response(resp.status_code)
             for k, v in resp.headers.items():
-                if k.lower() not in ("content-length", "transfer-encoding", "content-encoding"):
-                    self.send_header(k, v)
-            self._send_cors_headers()
-            self.end_headers()
+                k_low = k.lower()
+                if k_low in ("content-length", "transfer-encoding", "content-encoding", "connection") or k_low in cors_keys:
+                    continue
+                self.send_header(k, v)
 
-            for chunk in resp.iter_content(chunk_size=512):
-                if chunk:
-                    try:
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError):
-                        # İstemci soketi kapattı, aktarımı sessizce sonlandır
-                        return
+            self._send_cors_headers()
+
+            if is_streaming:
+                self.send_header("Transfer-Encoding", "chunked")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+
+                for chunk in resp.iter_content(chunk_size=512):
+                    if chunk:
+                        try:
+                            self._write_http_chunk(chunk)
+                        except (BrokenPipeError, ConnectionResetError):
+                            return
+                try:
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            else:
+                full_content = resp.content
+                self.send_header("Content-Length", str(len(full_content)))
+                self.end_headers()
+                self.wfile.write(full_content)
+                self.wfile.flush()
 
         except (BrokenPipeError, ConnectionResetError):
             return

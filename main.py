@@ -788,6 +788,8 @@ class TrayAIApp(QMainWindow):
         self.res_timer = QTimer(self)
         self.res_timer.timeout.connect(self.update_resource_monitor)
         self.res_timer.start(2000)
+        self.load_tracker_timer = QTimer(self)
+        self.load_tracker_timer.timeout.connect(self._track_model_loading_progress)
 
         user_port = int(self.cfg.get("port", 8080))
         self.upstream_port = user_port + 1
@@ -1837,7 +1839,9 @@ class TrayAIApp(QMainWindow):
             self.gpu_vram_widgets[g["id"]] = {
                 "bar": bar_vram,
                 "label": lbl_vram_stat,
-                "total_gb": max(0.5, g["vram_gb"])
+                "total_gb": max(0.5, g["vram_gb"]),
+                "drm_card": g.get("drm_card", g["id"]),
+                "is_igpu": g.get("is_igpu", False)
             }
 
             v_gpus.addWidget(card_row)
@@ -1931,7 +1935,9 @@ class TrayAIApp(QMainWindow):
         # 2. Kart Bazlı Canlı VRAM Barlarını Güncelle
         if hasattr(self, "gpu_vram_widgets"):
             for gid, w_dict in self.gpu_vram_widgets.items():
-                live_used = read_drm_vram_used_gb(gid)
+                c_idx = w_dict.get("drm_card", gid)
+                is_ig = w_dict.get("is_igpu", None)
+                live_used = read_drm_vram_used_gb(c_idx, is_igpu=is_ig)
                 tot = w_dict["total_gb"]
                 pct_val = min(100.0, (live_used / tot) * 100.0) if tot > 0 else 0.0
 
@@ -3099,6 +3105,78 @@ class TrayAIApp(QMainWindow):
             pass
         return list(models_dict.values())
 
+    def _track_model_loading_progress(self):
+        if not self.server_mgr.is_running() or not self.selected_model_path:
+            self.load_tracker_timer.stop()
+            return
+
+        target_gb = getattr(self, "_loading_target_gb", 0.0)
+        if target_gb <= 0:
+            return
+
+        proc = getattr(self.server_mgr, "process", None)
+        if not proc or proc.poll() is not None:
+            self.load_tracker_timer.stop()
+            return
+
+        try:
+            p = psutil.Process(proc.pid)
+
+            # 1. Disk I/O okuma takibi (Bayt bazında)
+            io_gb = 0.0
+            try:
+                cur_io = p.io_counters().read_bytes
+                start_io = getattr(self, "_io_start_bytes", cur_io)
+                io_gb = max(0.0, (cur_io - start_io) / (1024 ** 3))
+            except Exception:
+                pass
+
+            # 2. VRAM / GTT artışı (Radeon 780M veya dGPU)
+            vram_delta_gb = 0.0
+            if hasattr(self, "gpu_vram_widgets"):
+                for gid, w in self.gpu_vram_widgets.items():
+                    c_idx = w.get("drm_card", gid)
+                    is_ig = w.get("is_igpu", None)
+                    cur_v = read_drm_vram_used_gb(c_idx, is_igpu=is_ig)
+                    start_v = getattr(self, "_vram_start_map", {}).get(gid, cur_v)
+                    vram_delta_gb += max(0.0, cur_v - start_v)
+
+            # 3. Süreç RSS (Fiziksel RAM)
+            rss_gb = p.memory_info().rss / (1024 ** 3)
+
+            # Gerçek okunan veri (üç kaynaktan en güveniliri)
+            loaded_gb = min(target_gb, max(io_gb, vram_delta_gb, rss_gb))
+
+            # Canlı okuma hızı hesabı (MB/s)
+            now = time.time()
+            dt = max(0.1, now - getattr(self, "_last_track_time", now))
+            last_loaded = getattr(self, "_last_loaded_gb", loaded_gb)
+            speed_mb = max(0.0, ((loaded_gb - last_loaded) * 1024) / dt)
+            self._last_loaded_gb = loaded_gb
+            self._last_track_time = now
+
+            # %0 - %85 aralığı: Model tensörlerinin diskten belleğe akışı
+            raw_pct = min(1.0, loaded_gb / target_gb)
+            calculated_pct = int(raw_pct * 85.0)
+
+            cur_val = self.load_progress_bar.value()
+            # Geri gitmeyi engelle, ancak asla yapay +1 ekleme!
+            new_val = max(cur_val, calculated_pct)
+            new_val = min(85, max(5, new_val))
+
+            self.load_progress_bar.setValue(new_val)
+
+            # Canlı dönen gösterge simgesi (donmadığını gösterir)
+            glyphs = ["◐", "◓", "◑", "◒"]
+            tick = getattr(self, "_anim_tick", 0) + 1
+            self._anim_tick = tick
+            g = glyphs[tick % len(glyphs)]
+
+            speed_str = f" • {speed_mb:.0f} MB/s" if speed_mb >= 1.0 else ""
+            self.lbl_load_stage.setText(f"{g} Yükleniyor: {loaded_gb:.2f} / {target_gb:.2f} GB (%{new_val}){speed_str}")
+        except Exception:
+            pass
+
     def load_selected_model(self):
         if not self.server_service_enabled:
             return
@@ -3252,10 +3330,31 @@ class TrayAIApp(QMainWindow):
         self.poller.set_port(port)
         self.poller.reset_ready()
         self.load_progress_bar.setValue(5)
-        self.lbl_load_stage.setText("⏳ RAM / VRAM...")
+        
+        # Yükleme hedef boyutunu ve donanım başlangıçlarını kaydet
+        model_size = os.path.getsize(self.selected_model_path) / (1024**3)
+        if mmproj_path and os.path.exists(mmproj_path):
+            model_size += os.path.getsize(mmproj_path) / (1024**3)
+        self._loading_target_gb = max(0.5, model_size)
+
+        # Kart bazlı başlangıç VRAM/GTT haritası
+        self._vram_start_map = {}
+        if hasattr(self, "gpu_vram_widgets"):
+            for gid, w in self.gpu_vram_widgets.items():
+                c_idx = w.get("drm_card", gid)
+                is_ig = w.get("is_igpu", None)
+                self._vram_start_map[gid] = read_drm_vram_used_gb(c_idx, is_igpu=is_ig)
+
+        self._io_start_bytes = 0
+        self._last_loaded_gb = 0.0
+        self._last_track_time = time.time()
+        self._anim_tick = 0
+
+        self.lbl_load_stage.setText(f"⏳ Model okunuyor: 0.00 / {self._loading_target_gb:.2f} GB (%5)")
         self.set_status_badge("loading", self.t("srv_loading"))
         self.btn_drop_cache.setEnabled(False)
         tray_ref.setIcon(get_tray_icon("loading"))
+        self.load_tracker_timer.start(250)
 
         try:
             total_l = self.active_model_info.get("total_layers", 32) if self.active_model_info else 32
@@ -3283,6 +3382,7 @@ class TrayAIApp(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def unload_current_model(self):
+        if hasattr(self, 'load_tracker_timer'): self.load_tracker_timer.stop()
         self.server_mgr.stop_model()
         self.poller.reset_ready()
         self.load_progress_bar.setValue(0)
@@ -3338,39 +3438,12 @@ class TrayAIApp(QMainWindow):
                 self.txt_logs.verticalScrollBar().setValue(self.txt_logs.verticalScrollBar().maximum())
 
     def on_load_progress(self, pct, stage_text):
-        if pct > self.load_progress_bar.value():
+        if pct >= self.load_progress_bar.value():
             self.load_progress_bar.setValue(pct)
             self.lbl_load_stage.setText(f"⏳ {stage_text} (%{pct})")
 
     def on_health_loading_tick(self):
-        target_gb = self.active_model_info.get("size_gb", 0.0) if self.active_model_info else 0.0
-        proc = getattr(self.server_mgr, "process", None)
-        
-        if proc and proc.poll() is None and target_gb > 0:
-            try:
-                p = psutil.Process(proc.pid)
-                # RSS (fiziksel RAM) ve VMS tüketimi
-                rss_gb = p.memory_info().rss / (1024 ** 3)
-                
-                # Model ağırlıklarının aktarılma yüzdesi (küsuratlı)
-                pct_float = min(99.0, (rss_gb / target_gb) * 100.0)
-                int_pct = int(pct_float)
-                
-                if int_pct > self.load_progress_bar.value():
-                    self.load_progress_bar.setValue(int_pct)
-                
-                self.lbl_load_stage.setText(
-                    f"⏳ RAM/VRAM: {rss_gb:.2f} / {target_gb:.2f} GB (%{pct_float:.2f})"
-                )
-                return
-            except Exception:
-                pass
-
-        # Geriye dönük yedek mantık
-        cur = self.load_progress_bar.value()
-        if cur < 95:
-            self.load_progress_bar.setValue(cur + 1)
-            self.lbl_load_stage.setText(f"⏳ RAM/VRAM Offloading... (%{cur + 1})")
+        pass
 
     def on_health_confirmed_ready(self):
         # Uygulama kendi bir model başlatmadıysa yetim sinyallere aldanma
@@ -3384,6 +3457,8 @@ class TrayAIApp(QMainWindow):
             self.on_model_ready()
 
     def on_model_ready(self):
+        if hasattr(self, "load_tracker_timer"):
+            self.load_tracker_timer.stop()
         self.load_progress_bar.setValue(100)
         m_name = os.path.basename(self.selected_model_path) if self.selected_model_path else "Model"
         self.lbl_load_stage.setText(f"✅ {m_name} (%100)")
@@ -3439,6 +3514,7 @@ class TrayAIApp(QMainWindow):
                 self.lbl_tel_speed.setText(self.t("speed_prefix").format(val=f"{tg_speed:.1f}"))
 
     def on_process_stopped(self, code):
+        if hasattr(self, 'load_tracker_timer'): self.load_tracker_timer.stop()
         self.btn_drop_cache.setEnabled(True)
         self.btn_unload_model.setEnabled(False)
         if self.load_progress_bar.value() < 100 and code != 0:
