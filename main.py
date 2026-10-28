@@ -1,3 +1,5 @@
+from PyQt6.QtCore import QSize
+from PyQt6.QtWidgets import QAbstractItemView
 from PyQt6.QtCore import QObject, QEvent
 
 class NoWheelEventFilter(QObject):
@@ -29,6 +31,7 @@ import socket
 import psutil
 import subprocess
 import requests
+from PyQt6.QtWidgets import QAbstractItemView
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QSystemTrayIcon, QMenu, QTabWidget,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSlider,
@@ -400,9 +403,10 @@ class FastScannerThread(QThread):
 
 
 class DownloadItemWidget(QFrame):
-    def __init__(self, task_id, filename, repo_id, worker):
+    def __init__(self, task_id, filename, repo_id, parent_app, worker=None, initial_state="downloading", initial_pct=0, stats_text=""):
         super().__init__()
         self.task_id = task_id
+        self.parent_app = parent_app
         self.worker = worker
         self.setStyleSheet("background: #24283b; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
         layout = QVBoxLayout(self)
@@ -412,7 +416,7 @@ class DownloadItemWidget(QFrame):
         top = QHBoxLayout()
         self.lbl_title = QLabel(f"<b>{filename}</b> <span style='color:#7aa2f7; font-size:11px;'>({repo_id})</span>")
         self.lbl_title.setWordWrap(True)
-        self.lbl_stats = QLabel("0.0 MB / ? MB (0.0 MB/s)")
+        self.lbl_stats = QLabel(stats_text or "0.0 MB / ? MB")
         self.lbl_stats.setStyleSheet("color: #73daca; font-size: 11px;")
         top.addWidget(self.lbl_title, 1)
         top.addWidget(self.lbl_stats)
@@ -420,16 +424,18 @@ class DownloadItemWidget(QFrame):
 
         self.prog = QProgressBar()
         self.prog.setRange(0, 100)
-        self.prog.setValue(0)
+        self.prog.setValue(initial_pct)
         self.prog.setFixedHeight(14)
         layout.addWidget(self.prog)
 
         btns = QHBoxLayout()
-        self.lbl_state = QLabel("⏳ İndiriliyor...")
-        self.lbl_state.setStyleSheet("font-size: 11px; color: #e0af68;")
+        self.lbl_state = QLabel()
+        self.lbl_state.setStyleSheet("font-size: 11px;")
+
         self.btn_pause = QPushButton("⏸ Duraklat")
         self.btn_pause.setFixedHeight(26)
         self.btn_pause.clicked.connect(self.toggle_pause)
+
         self.btn_cancel = QPushButton("✕ İptal")
         self.btn_cancel.setFixedHeight(26)
         self.btn_cancel.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold;")
@@ -441,26 +447,69 @@ class DownloadItemWidget(QFrame):
         btns.addWidget(self.btn_cancel)
         layout.addLayout(btns)
 
+        self._paused = (initial_state == "paused")
+        if self._paused:
+            self.lbl_state.setText("⏸ Duraklatıldı (Devam ettirilebilir)")
+            self.lbl_state.setStyleSheet("color: #e0af68; font-size: 11px;")
+            self.btn_pause.setText("▶ Devam Et")
+        elif initial_state == "verifying":
+            self.lbl_state.setText("🔍 Bütünlük Doğrulanıyor (SHA-256)...")
+            self.lbl_state.setStyleSheet("color: #bb9af7; font-weight: bold; font-size: 11px;")
+            self.btn_pause.setEnabled(False)
+        elif initial_state == "completed":
+            self.lbl_state.setText("✅ Doğrulandı & Hazır")
+            self.lbl_state.setStyleSheet("color: #9ece6a; font-weight: bold; font-size: 11px;")
+            self.btn_pause.hide()
+            self.btn_cancel.setText("🗑️ Kaldır")
+        else:
+            self.lbl_state.setText("⚡ 4x Hızlı İndiriliyor...")
+            self.lbl_state.setStyleSheet("color: #7dcfff; font-size: 11px;")
+
+    def set_worker(self, worker):
+        self.worker = worker
         self._paused = False
+        self.btn_pause.setText("⏸ Duraklat")
+        self.lbl_state.setText("⏳ İndiriliyor...")
+        self.lbl_state.setStyleSheet("color: #7dcfff; font-size: 11px;")
 
     def toggle_pause(self):
         if not self._paused:
             self._paused = True
-            self.worker.pause()
+            if self.worker:
+                self.worker.pause()
             self.btn_pause.setText("▶ Devam Et")
             self.lbl_state.setText("⏸ Duraklatıldı")
+            self.lbl_state.setStyleSheet("color: #e0af68; font-size: 11px;")
+            self.parent_app.update_persisted_download_state(self.task_id, "paused")
         else:
             self._paused = False
-            self.worker.resume()
             self.btn_pause.setText("⏸ Duraklat")
             self.lbl_state.setText("⏳ İndiriliyor...")
+            self.lbl_state.setStyleSheet("color: #7dcfff; font-size: 11px;")
+            self.parent_app.resume_download_task(self.task_id)
 
     def cancel_dl(self):
-        self.worker.cancel()
+        if self.worker:
+            self.worker.cancel()
         self.btn_pause.setEnabled(False)
         self.btn_cancel.setEnabled(False)
         self.lbl_state.setText("🚫 İptal Edildi")
+        self.lbl_state.setStyleSheet("color: #f7768e; font-size: 11px;")
+        self.parent_app.remove_download_task(self.task_id)
 
+
+
+class HFModelCardWidget(QFrame):
+    def __init__(self, item, list_widget, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.list_widget = list_widget
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        self.list_widget.setCurrentItem(self.item)
+        self.list_widget.itemClicked.emit(self.item)
+        super().mousePressEvent(event)
 
 class TrayAIApp(QMainWindow):
     def __init__(self, runner_ref):
@@ -1117,8 +1166,8 @@ class TrayAIApp(QMainWindow):
         tray.showMessage(title, message, msg_icon, 4000)
 
     def open_chat_tester(self):
-        user_port = self.spin_port.value()
-        dlg = ChatTesterDialog(self, user_port, self.get_current_active_model_id)
+        target_port = getattr(self, "upstream_port", self.spin_port.value() + 1)
+        dlg = ChatTesterDialog(self, target_port, self.get_current_active_model_id)
         dlg.exec()
 
     def open_voice_assistant(self):
@@ -1325,6 +1374,21 @@ class TrayAIApp(QMainWindow):
         h_quick_actions.addWidget(self.btn_autotune, 1)
         l.addLayout(h_quick_actions)
 
+        # 🎯 Tek Tıkla Kullanım Profilleri (Presets)
+        h_preset = QHBoxLayout()
+        lbl_pr = QLabel("🎯 <b>Kullanım Profili:</b>")
+        lbl_pr.setStyleSheet("color: #7dcfff; font-size: 12px;")
+        self.cb_preset = QComboBox()
+        self.cb_preset.addItem("⚙️ Özel (Manuel Ayarlar)", "custom")
+        self.cb_preset.addItem("🎯 Hassas Kodlama & Analiz (Deterministic)", "coding")
+        self.cb_preset.addItem("🧠 Derin Akıl Yürütme (Reasoning / Qwen3 / R1)", "reasoning")
+        self.cb_preset.addItem("🎭 Yaratıcı Sohbet & Rol Yapma (Creative)", "creative")
+        self.cb_preset.addItem("🤖 Yapılandırılmış Çıktı & Ajan (JSON / Tool)", "json")
+        self.cb_preset.currentIndexChanged.connect(self.apply_sampler_preset)
+        h_preset.addWidget(lbl_pr)
+        h_preset.addWidget(self.cb_preset, 1)
+        l.addLayout(h_preset)
+
         mem_est_frame = QFrame()
         mem_est_frame.setStyleSheet("background: #1a1e2d; border: 1px solid #292e42; border-left: 3px solid #e0af68; border-radius: 8px; padding: 8px;")
         v_est = QVBoxLayout(mem_est_frame)
@@ -1376,6 +1440,15 @@ class TrayAIApp(QMainWindow):
         self.slider_ngl.valueChanged.connect(self.spin_ngl.setValue)
         self.spin_ngl.valueChanged.connect(self.slider_ngl.setValue)
         v_ctx.addWidget(self.slider_ngl)
+
+        self.chk_ctx_shift = QCheckBox("🔄 Akıllı Bağlam Kaydırma & Çökme Koruması (--context-shift)")
+        self.chk_ctx_shift.setChecked(True)
+        self.chk_ctx_shift.setStyleSheet("color: #9ece6a; font-weight: bold; font-size: 11px;")
+        self.chk_ctx_shift.setToolTip(
+            "262K veya belirlenen sınır dolduğunda motorun çökmesini/kapanmasını engeller; "
+            "eski mesajları sistem yönergesini bozmadan kaydırarak (sliding window) çıkarıma kesintisiz devam eder."
+        )
+        v_ctx.addWidget(self.chk_ctx_shift)
         l.addWidget(self.grp_ctx)
 
         self.grp_kv = QGroupBox()
@@ -1677,7 +1750,7 @@ class TrayAIApp(QMainWindow):
             self.spin_freq_pen, self.spin_seed, self.spin_dry_mult, self.spin_dry_base,
             self.spin_xtc_prob, self.spin_xtc_thresh, self.spin_dynatemp, self.spin_typical,
             self.spin_yarn_ext, self.cb_cache_k, self.cb_cache_v, self.cb_rope_scaling,
-            self.cb_chat_template, self.cb_mirostat
+            self.cb_chat_template, self.cb_mirostat, getattr(self, 'cb_preset', None)
         ]
         for w in wheel_widgets:
             if w:
@@ -1745,24 +1818,94 @@ class TrayAIApp(QMainWindow):
 
         self.grp_gpus = QGroupBox()
         v_gpus = QVBoxLayout(self.grp_gpus)
+        v_gpus.setSpacing(8)
+        v_gpus.setContentsMargins(10, 12, 10, 10)
 
-        strat_box = QHBoxLayout()
-        self.lbl_hw_split = QLabel()
+        # 2x2 Dikey Yığınlı (Stacked) Kontrol Matrisi (Asla Sağa Taşmaz)
+        grid_ctrl = QGridLayout()
+        grid_ctrl.setSpacing(10)
+        grid_ctrl.setContentsMargins(0, 0, 0, 0)
+
+        # Sol Üst: Dağıtım Stratejisi
+        v_box_split = QVBoxLayout()
+        v_box_split.setSpacing(3)
+        self.lbl_hw_split = QLabel("🔀 Dağıtım Stratejisi:")
+        self.lbl_hw_split.setStyleSheet("font-size: 11px; color: #a9b1d6; font-weight: bold;")
         self.cb_split_mode = QComboBox()
-        self.cb_split_mode.addItem("Layer Split", "layer")
-        self.cb_split_mode.addItem("Row Split", "row")
-        self.cb_split_mode.addItem("Single GPU", "none")
-        strat_box.addWidget(self.lbl_hw_split)
-        strat_box.addWidget(self.cb_split_mode)
-        v_gpus.addLayout(strat_box)
+        self.cb_split_mode.addItem("Katman Bölme (Layer Split)", "layer")
+        self.cb_split_mode.addItem("Satır Bölme (Row Split / Tensor Parallel)", "row")
+        self.cb_split_mode.addItem("Tek GPU (Single GPU)", "none")
+        self.cb_split_mode.currentIndexChanged.connect(self._update_multi_gpu_preview)
+        v_box_split.addWidget(self.lbl_hw_split)
+        v_box_split.addWidget(self.cb_split_mode)
+        grid_ctrl.addLayout(v_box_split, 0, 0)
 
-        # Çoklu GPU Hibrit Katman / Bellek Oran Kaydırıcısı (Tensor-Split)
+        # Sağ Üst: Birincil Kart
+        v_box_main = QVBoxLayout()
+        v_box_main.setSpacing(3)
+        lbl_main = QLabel("👑 Birincil Kart (--main-gpu):")
+        lbl_main.setStyleSheet("font-size: 11px; color: #bb9af7; font-weight: bold;")
+        self.cb_main_gpu = QComboBox()
+        for g in self.hw_info.get("gpus", []):
+            label = f"GPU {g['id']}: {g['name'][:20]}"
+            if g.get("is_igpu"):
+                label += " (iGPU)"
+            self.cb_main_gpu.addItem(label, str(g["id"]))
+
+        saved_main_gid = str(self.cfg.get("main_gpu_id", "0"))
+        idx_mg = self.cb_main_gpu.findData(saved_main_gid)
+        if idx_mg >= 0:
+            self.cb_main_gpu.setCurrentIndex(idx_mg)
+        self.cb_main_gpu.currentIndexChanged.connect(self._on_main_gpu_changed)
+        v_box_main.addWidget(lbl_main)
+        v_box_main.addWidget(self.cb_main_gpu)
+        grid_ctrl.addLayout(v_box_main, 0, 1)
+
+        # Sol Alt: Oranlama Yöntemi
+        v_box_calc = QVBoxLayout()
+        v_box_calc.setSpacing(3)
+        lbl_calc = QLabel("⚖️ Oranlama Yöntemi:")
+        lbl_calc.setStyleSheet("font-size: 11px; color: #a9b1d6; font-weight: bold;")
+        self.cb_split_calc = QComboBox()
+        self.cb_split_calc.addItem("🧠 Akıllı Usable VRAM (Rezerv Düşülmüş)", "auto")
+        self.cb_split_calc.addItem("🎛️ Manuel Oran / Katman Belirleme", "manual")
+        saved_calc = self.cfg.get("split_calc_mode", "auto")
+        idx_calc = self.cb_split_calc.findData(saved_calc)
+        if idx_calc >= 0:
+            self.cb_split_calc.setCurrentIndex(idx_calc)
+        self.cb_split_calc.currentIndexChanged.connect(self._on_split_calc_changed)
+        v_box_calc.addWidget(lbl_calc)
+        v_box_calc.addWidget(self.cb_split_calc)
+        grid_ctrl.addLayout(v_box_calc, 1, 0)
+
+        # Sağ Alt: KV Cache Konumu
+        v_box_kv = QVBoxLayout()
+        v_box_kv.setSpacing(3)
+        lbl_kv = QLabel("📦 KV Cache Konumu:")
+        lbl_kv.setStyleSheet("font-size: 11px; color: #7dcfff; font-weight: bold;")
+        self.cb_kv_placement = QComboBox()
+        self.cb_kv_placement.addItem("⚡ GPU VRAM (En Hızlı)", "gpu")
+        self.cb_kv_placement.addItem("💾 Sistem RAM'i (-nkvo / Devasa Bağlam)", "ram")
+        saved_kv = self.cfg.get("kv_placement", "gpu")
+        idx_kv = self.cb_kv_placement.findData(saved_kv)
+        if idx_kv >= 0:
+            self.cb_kv_placement.setCurrentIndex(idx_kv)
+        self.cb_kv_placement.currentIndexChanged.connect(self._on_kv_placement_changed)
+        v_box_kv.addWidget(lbl_kv)
+        v_box_kv.addWidget(self.cb_kv_placement)
+        grid_ctrl.addLayout(v_box_kv, 1, 1)
+
+        v_gpus.addLayout(grid_ctrl)
+
+        # Çoklu GPU Dağıtım ve Katman HUD Paneli
         self.frame_gpu_ratio = QFrame()
-        self.frame_gpu_ratio.setStyleSheet("background: #1a1b26; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
+        self.frame_gpu_ratio.setStyleSheet("background: #16161e; border: 1px solid #3b4261; border-radius: 6px; padding: 6px;")
         v_ratio = QVBoxLayout(self.frame_gpu_ratio)
-        v_ratio.setContentsMargins(6, 4, 6, 4)
+        v_ratio.setContentsMargins(8, 6, 8, 6)
+        v_ratio.setSpacing(4)
 
-        self.lbl_gpu_ratio_title = QLabel("⚖️ <b>Çoklu GPU Yük / VRAM Oranı:</b> GPU 0 (%50) ⟷ GPU 1 (%50)")
+        self.lbl_gpu_ratio_title = QLabel("⚖️ <b>Katman Dağıtım Matrisi:</b> Hesaplanıyor...")
+        self.lbl_gpu_ratio_title.setWordWrap(True)
         self.lbl_gpu_ratio_title.setStyleSheet("color: #7dcfff; font-size: 11px;")
         v_ratio.addWidget(self.lbl_gpu_ratio_title)
 
@@ -1772,16 +1915,17 @@ class TrayAIApp(QMainWindow):
         self.slider_gpu_ratio.setValue(saved_ratio)
         self.slider_gpu_ratio.valueChanged.connect(self._on_gpu_ratio_changed)
         v_ratio.addWidget(self.slider_gpu_ratio)
+
         v_gpus.addWidget(self.frame_gpu_ratio)
 
-        # Eğer sistemde birden az aktif GPU varsa kaydırıcıyı gizle
-        if len(self.hw_info.get("gpus", [])) < 2:
-            self.frame_gpu_ratio.hide()
-
+        # Kart Listesi ve Rezerv Kutuları
         self.gpu_vram_widgets = {}
+        self.gpu_headroom_spins = {}
+        self.gpu_card_titles = {}
         saved_gpu_states = self.cfg.get("enabled_gpus", {})
+        saved_headrooms = self.cfg.get("gpu_headroom", {})
 
-        for g in self.hw_info["gpus"]:
+        for g in self.hw_info.get("gpus", []):
             dev_id = str(g["id"])
             card_row = QFrame()
             card_row.setStyleSheet("""
@@ -1789,20 +1933,17 @@ class TrayAIApp(QMainWindow):
                     background: #1f2335;
                     border: 1px solid #292e42;
                     border-radius: 8px;
-                    padding: 6px;
+                    padding: 4px;
                 }
             """)
             v_card = QVBoxLayout(card_row)
             v_card.setContentsMargins(10, 8, 10, 8)
             v_card.setSpacing(6)
 
-            # Üst Satır: Kart Adı + ID Rozeti + ON/OFF Butonu
             h_top = QHBoxLayout()
-            lbl_title = QLabel(
-                f"<b>{g['name']}</b> "
-                f"<span style='background:#24283b; color:#7aa2f7; padding:2px 6px; border-radius:4px; font-size:11px; border:1px solid #3b4261;'>{g['backend']} (ID: {g['id']})</span>"
-            )
+            lbl_title = QLabel()
             lbl_title.setWordWrap(True)
+            self.gpu_card_titles[dev_id] = (lbl_title, g)
 
             btn_toggle = QPushButton()
             btn_toggle.setCheckable(True)
@@ -1817,7 +1958,28 @@ class TrayAIApp(QMainWindow):
             h_top.addWidget(btn_toggle)
             v_card.addLayout(h_top)
 
-            # Alt Kısım: Canlı VRAM Kullanım Sayacı ve İlerleme Çubuğu
+            # Rezerv ve Net Kullanılabilir Satırı
+            h_res = QHBoxLayout()
+            lbl_res_tag = QLabel("🛡️ Masaüstü Rezervi:")
+            lbl_res_tag.setStyleSheet("color: #a9b1d6; font-size: 11px;")
+            h_res.addWidget(lbl_res_tag)
+
+            spin_headroom = QDoubleSpinBox()
+            spin_headroom.setRange(0.0, 32.0)
+            spin_headroom.setSingleStep(0.5)
+            def_hr = 4.0 if g.get("is_igpu") else 2.5
+            spin_headroom.setValue(float(saved_headrooms.get(dev_id, def_hr)))
+            spin_headroom.valueChanged.connect(lambda val, d=dev_id: self._on_headroom_changed(d, val))
+            self.gpu_headroom_spins[dev_id] = spin_headroom
+            h_res.addWidget(spin_headroom)
+
+            h_res.addSpacing(10)
+            lbl_usable = QLabel()
+            lbl_usable.setStyleSheet("color: #7dcfff; font-size: 11px; font-weight: bold;")
+            h_res.addWidget(lbl_usable, 1)
+            v_card.addLayout(h_res)
+
+            # Canlı VRAM Barı
             h_vram_txt = QHBoxLayout()
             lbl_vram_stat = QLabel(f"📊 VRAM Kullanımı: <b>0.00 / {g['vram_gb']:.2f} GB</b> (%0.0)")
             lbl_vram_stat.setStyleSheet("color: #73daca; font-size: 11px;")
@@ -1839,6 +2001,7 @@ class TrayAIApp(QMainWindow):
             self.gpu_vram_widgets[g["id"]] = {
                 "bar": bar_vram,
                 "label": lbl_vram_stat,
+                "lbl_usable": lbl_usable,
                 "total_gb": max(0.5, g["vram_gb"]),
                 "drm_card": g.get("drm_card", g["id"]),
                 "is_igpu": g.get("is_igpu", False)
@@ -1847,8 +2010,8 @@ class TrayAIApp(QMainWindow):
             v_gpus.addWidget(card_row)
 
         l.addWidget(self.grp_gpus)
-
-        # Gelişmiş Canlı Sistem Kaynak Paneli (Dashboard)
+        self._refresh_gpu_card_titles()
+        self._update_multi_gpu_preview()
         self.grp_mon = QGroupBox()
         grid_mon = QGridLayout(self.grp_mon)
         grid_mon.setContentsMargins(10, 10, 10, 10)
@@ -1883,6 +2046,99 @@ class TrayAIApp(QMainWindow):
         l.addStretch()
         scroll.setWidget(tab)
         self.tabs.addTab(scroll, "Donanım")
+
+    def _refresh_gpu_card_titles(self):
+        sel_main = str(self.cb_main_gpu.currentData()) if hasattr(self, "cb_main_gpu") else "0"
+        for dev_id, (lbl, g) in getattr(self, "gpu_card_titles", {}).items():
+            is_main = (dev_id == sel_main)
+            main_badge = " <span style='background:#2d2042; color:#bb9af7; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; border:1px solid #bb9af7;'>👑 Birincil</span>" if is_main else ""
+            lbl.setText(
+                f"<b>{g['name']}</b>{main_badge} "
+                f"<span style='background:#24283b; color:#7aa2f7; padding:2px 6px; border-radius:4px; font-size:11px; border:1px solid #3b4261;'>{g['backend']} (ID: {g['id']})</span>"
+            )
+
+    def _on_main_gpu_changed(self):
+        mid = self.cb_main_gpu.currentData()
+        self.cfg["main_gpu_id"] = mid
+        save_json(CONFIG_FILE, self.cfg)
+        self._refresh_gpu_card_titles()
+        self._update_multi_gpu_preview()
+
+    def _on_split_calc_changed(self):
+        m = self.cb_split_calc.currentData()
+        self.cfg["split_calc_mode"] = m
+        save_json(CONFIG_FILE, self.cfg)
+        self.slider_gpu_ratio.setEnabled(m == "manual")
+        self._update_multi_gpu_preview()
+
+    def _on_kv_placement_changed(self):
+        kv = self.cb_kv_placement.currentData()
+        self.cfg["kv_placement"] = kv
+        save_json(CONFIG_FILE, self.cfg)
+
+    def _on_headroom_changed(self, dev_id, val):
+        if "gpu_headroom" not in self.cfg:
+            self.cfg["gpu_headroom"] = {}
+        self.cfg["gpu_headroom"][dev_id] = val
+        save_json(CONFIG_FILE, self.cfg)
+        self._update_multi_gpu_preview()
+
+    def _update_multi_gpu_preview(self):
+        active_gids = [str(gid) for gid, btn in getattr(self, "gpu_toggles", {}).items() if btn.isChecked()]
+        calc_mode = self.cb_split_calc.currentData() if hasattr(self, "cb_split_calc") else "auto"
+
+        # Kullanılabilir VRAM etiketlerini güncelle
+        for gid, w in getattr(self, "gpu_vram_widgets", {}).items():
+            tot = w["total_gb"]
+            hr_spin = self.gpu_headroom_spins.get(str(gid))
+            hr = hr_spin.value() if hr_spin else 2.0
+            usable = max(0.1, tot - hr)
+            if "lbl_usable" in w and w["lbl_usable"]:
+                w["lbl_usable"].setText(f"Net Kullanılabilir: <b>{usable:.2f} GB</b>")
+
+        if len(active_gids) < 2:
+            self.frame_gpu_ratio.hide()
+            return
+        else:
+            self.frame_gpu_ratio.show()
+
+        total_layers = 32
+        if self.active_model_info and self.active_model_info.get("total_layers"):
+            total_layers = self.active_model_info["total_layers"]
+
+        if calc_mode == "auto":
+            self.slider_gpu_ratio.setEnabled(False)
+            usable_map = {}
+            for gid in active_gids:
+                tot = self.gpu_vram_widgets.get(int(gid), {}).get("total_gb", 8.0)
+                hr_spin = self.gpu_headroom_spins.get(gid)
+                hr = hr_spin.value() if hr_spin else 2.0
+                usable_map[gid] = max(0.2, tot - hr)
+
+            tot_usable = sum(usable_map.values())
+            pcts = {gid: (usable_map[gid] / tot_usable) for gid in active_gids}
+
+            hud_parts = []
+            for gid in active_gids:
+                p = pcts[gid]
+                l_cnt = max(1, round(total_layers * p))
+                hud_parts.append(f"GPU {gid}: <b>%{p*100:.0f} (~{l_cnt} Katman)</b>")
+
+            self.lbl_gpu_ratio_title.setText(
+                f"⚖️ <b>Akıllı Dağıtım Matrisi ({total_layers} Katman):</b> " + " ⟷ ".join(hud_parts)
+            )
+        else:
+            self.slider_gpu_ratio.setEnabled(True)
+            r0 = self.slider_gpu_ratio.value()
+            r1 = 100 - r0
+            l0 = max(1, round(total_layers * (r0 / 100.0)))
+            l1 = max(1, total_layers - l0)
+            g0_id = active_gids[0]
+            g1_id = active_gids[1]
+            self.lbl_gpu_ratio_title.setText(
+                f"⚖️ <b>Manuel Dağıtım Matrisi ({total_layers} Katman):</b> "
+                f"GPU {g0_id}: <b>%{r0} (~{l0} Katman)</b> ⟷ GPU {g1_id}: <b>%{r1} (~{l1} Katman)</b>"
+            )
 
     def _update_gpu_btn_style(self, btn, is_on):
         if is_on:
@@ -2158,21 +2414,55 @@ class TrayAIApp(QMainWindow):
 
         search_row = QHBoxLayout()
         self.input_hf = QLineEdit()
-        self.input_hf.returnPressed.connect(lambda: self.fetch_hf_models(mode="search"))
-        self.btn_hf_search = QPushButton()
-        self.btn_hf_search.clicked.connect(lambda: self.fetch_hf_models(mode="search"))
+        self.input_hf.setPlaceholderText("🔎 Model veya yayıncı ara (yazdıkça anında listelenir)...")
+        self.input_hf.setClearButtonEnabled(True)
+
+        # 400ms Debounce Timer (Yazarken API'yi boğmadan anlık listeleme)
+        self.hf_search_timer = QTimer(self)
+        self.hf_search_timer.setSingleShot(True)
+        self.hf_search_timer.setInterval(400)
+        self.hf_search_timer.timeout.connect(self._on_hf_search_debounce_timeout)
+        self.input_hf.textChanged.connect(self._on_hf_search_text_changed)
+        self.input_hf.returnPressed.connect(lambda: (self.hf_search_timer.stop(), self.fetch_hf_models(mode="search")))
+
+        self.btn_hf_search = QPushButton("🔍 Ara")
+        self.btn_hf_search.clicked.connect(lambda: (self.hf_search_timer.stop(), self.fetch_hf_models(mode="search")))
         search_row.addWidget(self.input_hf, 1)
         search_row.addWidget(self.btn_hf_search)
         l.addLayout(search_row)
 
+        # Yayıncı ve Model Ölçeği Filtre Çubuğu
+        smart_filters_row = QHBoxLayout()
+        self.cb_hf_publisher = QComboBox()
+        self.cb_hf_publisher.addItem("🏢 Tüm Yayıncılar", "all")
+        self.cb_hf_publisher.addItem("⭐ Unsloth (Önerilen)", "unsloth")
+        self.cb_hf_publisher.addItem("⭐ Bartowski", "bartowski")
+        self.cb_hf_publisher.addItem("🏢 Qwen", "Qwen")
+        self.cb_hf_publisher.addItem("🏢 Meta Llama", "meta-llama")
+        self.cb_hf_publisher.addItem("🏢 Mistral AI", "mistralai")
+        self.cb_hf_publisher.addItem("🏢 DeepSeek", "deepseek-ai")
+        self.cb_hf_publisher.currentIndexChanged.connect(lambda: self.fetch_hf_models(mode="search"))
+
+        self.cb_hf_scale = QComboBox()
+        self.cb_hf_scale.addItem("📐 Tüm Boyutlar", "all")
+        self.cb_hf_scale.addItem("🌱 Hafif (< 8B)", "light")
+        self.cb_hf_scale.addItem("⚖️ Dengeli (8B - 14B)", "medium")
+        self.cb_hf_scale.addItem("💪 Güçlü (14B - 35B)", "heavy")
+        self.cb_hf_scale.addItem("🐘 Ağır (> 35B)", "massive")
+        self.cb_hf_scale.currentIndexChanged.connect(lambda: self.fetch_hf_models(mode="search"))
+
+        smart_filters_row.addWidget(self.cb_hf_publisher, 1)
+        smart_filters_row.addWidget(self.cb_hf_scale, 1)
+        l.addLayout(smart_filters_row)
+
         filter_row = QHBoxLayout()
-        self.btn_hf_trend = QPushButton()
+        self.btn_hf_trend = QPushButton("🔥 Trendler")
         self.btn_hf_trend.clicked.connect(lambda: self.fetch_hf_models(mode="trending"))
-        self.btn_hf_dl = QPushButton()
+        self.btn_hf_dl = QPushButton("⬇️ En Çok İndirilen")
         self.btn_hf_dl.clicked.connect(lambda: self.fetch_hf_models(mode="downloads"))
-        self.btn_hf_likes = QPushButton()
+        self.btn_hf_likes = QPushButton("⭐ En Beğenilen")
         self.btn_hf_likes.clicked.connect(lambda: self.fetch_hf_models(mode="likes"))
-        self.btn_hf_new = QPushButton()
+        self.btn_hf_new = QPushButton("🆕 En Yeniler")
         self.btn_hf_new.clicked.connect(lambda: self.fetch_hf_models(mode="recent"))
         filter_row.addWidget(self.btn_hf_trend)
         filter_row.addWidget(self.btn_hf_dl)
@@ -2189,8 +2479,18 @@ class TrayAIApp(QMainWindow):
         self.list_hf_models.itemClicked.connect(self.on_hf_repo_clicked)
         l.addWidget(self.list_hf_models, 3)
 
-        self.lbl_hf_files = QLabel()
-        l.addWidget(self.lbl_hf_files)
+        h_files_top = QHBoxLayout()
+        self.lbl_hf_files = QLabel("Model İçindeki Quant (.gguf) Dosyaları:")
+        self.cb_hf_quant_filter = QComboBox()
+        self.cb_hf_quant_filter.addItem("Tüm Quantlar", "all")
+        self.cb_hf_quant_filter.addItem("Q4 (Önerilen)", "q4")
+        self.cb_hf_quant_filter.addItem("Q5 / Q6 (Yüksek Kalite)", "q5_q6")
+        self.cb_hf_quant_filter.addItem("Q8 (Maksimum Kalite)", "q8")
+        self.cb_hf_quant_filter.addItem("IQ (Düşük Bit)", "iq")
+        self.cb_hf_quant_filter.currentIndexChanged.connect(self.render_hf_files_list)
+        h_files_top.addWidget(self.lbl_hf_files, 1)
+        h_files_top.addWidget(self.cb_hf_quant_filter)
+        l.addLayout(h_files_top)
 
         self.list_hf_files = QListWidget()
         self.list_hf_files.setWordWrap(True)
@@ -2199,12 +2499,34 @@ class TrayAIApp(QMainWindow):
 
         self.tabs.addTab(tab, "Hugging Face")
 
+    def _on_hf_search_text_changed(self, text):
+        # Kullanıcı yazdığı sürece sayacı yeniden başlat
+        self.hf_search_timer.start()
+
+    def _on_hf_search_debounce_timeout(self):
+        query = self.input_hf.text().strip()
+        if len(query) >= 2:
+            self.fetch_hf_models(mode="search")
+        elif len(query) == 0:
+            # Arama kutusu temizlendiğinde popüler modellere dön
+            self.fetch_hf_models(mode="trending")
+
     def fetch_hf_models(self, mode="trending"):
-        query = self.input_hf.text().strip() if mode == "search" else ""
+        query = self.input_hf.text().strip()
+        author = self.cb_hf_publisher.currentData() if hasattr(self, "cb_hf_publisher") else "all"
+        scale = self.cb_hf_scale.currentData() if hasattr(self, "cb_hf_scale") else "all"
+
         self.list_hf_models.clear()
         self.list_hf_models.addItem("⏳ Hugging Face üzerinden modeller getiriliyor...")
         token = self.cfg.get("hf_token", "")
-        self.hf_search_worker = HFSearchWorker(query=query, mode=mode, limit=25, token=token)
+        self.hf_search_worker = HFSearchWorker(
+            query=query,
+            mode=mode,
+            limit=30,
+            token=token,
+            author=author,
+            scale_filter=scale
+        )
         self.hf_search_worker.results_ready.connect(self.on_hf_results_ready)
         self.hf_search_worker.error_occurred.connect(self.on_hf_error)
         self.hf_search_worker.start()
@@ -2212,22 +2534,82 @@ class TrayAIApp(QMainWindow):
     def on_hf_results_ready(self, results):
         self.list_hf_models.clear()
         if not results:
-            self.list_hf_models.addItem("Sonuç bulunamadı.")
+            self.list_hf_models.addItem("Eşleşen model bulunamadı.")
             return
 
-        for r in results:
-            caps = r["caps"]
-            badges = []
-            if caps["thinking"]: badges.append("🧠 Düşünce")
-            if caps["tools"]: badges.append("🔧 Araçlar")
-            if caps["vision"]: badges.append("👁️ Görsel")
-            if caps["audio"]: badges.append("🎙️ Ses")
-            b_str = f"  [{' | '.join(badges)}]" if badges else ""
+        def _fmt(n):
+            if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+            if n >= 1_000: return f"{n/1_000:.1f}K"
+            return str(n)
 
-            txt = f"📦 {r['id']}\n↳ ⬇️ {r['downloads']:,}  |  ⭐ {r['likes']:,}{b_str}"
-            item = QListWidgetItem(txt)
-            item.setData(Qt.ItemDataRole.UserRole, r["id"])
+        for m in results:
+            full_id = m.get("id", "")
+            if "/" in full_id:
+                publisher, model_name = full_id.split("/", 1)
+            else:
+                publisher, model_name = "HuggingFace", full_id
+
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, full_id)
+            item.setSizeHint(QSize(0, 64))
+
+            card = HFModelCardWidget(item, self.list_hf_models)
+            card.setStyleSheet("""
+                QFrame {
+                    background: #1f2335;
+                    border: 1px solid #292e42;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    border: 1px solid #7aa2f7;
+                    background: #24283b;
+                }
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 6, 10, 6)
+            card_layout.setSpacing(3)
+
+            # Yetenek rozetleri
+            caps = m.get("caps", {})
+            cap_html = ""
+            if caps.get("thinking"):
+                cap_html += " <span style='background:#2d2042; color:#bb9af7; padding:1px 5px; border-radius:3px; font-size:10px; font-weight:bold;'>🧠 Akıl Yürütme</span>"
+            if caps.get("tools"):
+                cap_html += " <span style='background:#1b3242; color:#7dcfff; padding:1px 5px; border-radius:3px; font-size:10px; font-weight:bold;'>🛠️ Fonksiyon</span>"
+            if caps.get("vision"):
+                cap_html += " <span style='background:#1f362b; color:#9ece6a; padding:1px 5px; border-radius:3px; font-size:10px; font-weight:bold;'>👁️ Görsel</span>"
+            if caps.get("audio"):
+                cap_html += " <span style='background:#3d2f1f; color:#ff9e64; padding:1px 5px; border-radius:3px; font-size:10px; font-weight:bold;'>🎙️ Ses</span>"
+
+            # 1. Satır: Kalın Model Adı + Yetenekler
+            lbl_title = QLabel(f"<span style='font-size:13px; font-weight:bold; color:#c0caf5;'>{model_name}</span>{cap_html}")
+            lbl_title.setStyleSheet("border: none; background: transparent;")
+            lbl_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            # 2. Satır: Yayıncı ve Teknik Detaylar
+            dl_cnt = _fmt(m.get("downloads", 0))
+            likes_cnt = _fmt(m.get("likes", 0))
+            scale = m.get("scale", "unknown")
+            scale_str = ""
+            if scale == "light": scale_str = " • <span style='color:#73daca;'>🌱 Hafif (<8B)</span>"
+            elif scale == "medium": scale_str = " • <span style='color:#7aa2f7;'>⚖️ Dengeli (8-14B)</span>"
+            elif scale == "heavy": scale_str = " • <span style='color:#e0af68;'>💪 Güçlü (14-35B)</span>"
+            elif scale == "massive": scale_str = " • <span style='color:#f7768e;'>🐘 Ağır (>35B)</span>"
+
+            meta_text = (
+                f"<span style='color:#7aa2f7; font-size:11px; font-weight:bold;'>🏢 {publisher}</span>"
+                f"<span style='color:#565f89; font-size:11px;'>  •  </span>"
+                f"<span style='color:#9aa5ce; font-size:11px;'>⬇️ {dl_cnt}  •  ⭐ {likes_cnt}{scale_str}</span>"
+            )
+            lbl_meta = QLabel(meta_text)
+            lbl_meta.setStyleSheet("border: none; background: transparent;")
+            lbl_meta.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+            card_layout.addWidget(lbl_title)
+            card_layout.addWidget(lbl_meta)
+
             self.list_hf_models.addItem(item)
+            self.list_hf_models.setItemWidget(item, card)
 
     def on_hf_error(self, err):
         self.list_hf_models.clear()
@@ -2246,52 +2628,273 @@ class TrayAIApp(QMainWindow):
         self.hf_files_worker.start()
 
     def on_hf_files_ready(self, repo_id, files):
+        self._current_hf_files = files
+        self.render_hf_files_list()
+
+    def render_hf_files_list(self):
         self.list_hf_files.clear()
+        files = getattr(self, "_current_hf_files", [])
         if not files:
             self.list_hf_files.addItem("Bu depoda doğrudan .gguf uzantılı dosya bulunamadı.")
             return
 
-        for f in files:
-            item = QListWidgetItem()
-            row_w = QWidget()
-            h = QHBoxLayout(row_w)
-            h.setContentsMargins(6, 4, 6, 4)
+        q_filter = self.cb_hf_quant_filter.currentData() if hasattr(self, "cb_hf_quant_filter") else "all"
+        vram_tot = self.hw_info.get("total_vram_gb", 8.0)
+        ram_tot = self.hw_info.get("ram_gb", 32.0)
 
-            lbl = QLabel(
-                f"<b>{f['filename']}</b><br>"
-                f"<span style='color:#73daca; font-size:11px;'>Quant: <b>{f['quant']}</b>  •  Boyut: <b>{f['size_gb']} GB</b></span>"
+        for f in files:
+            q_name = f["quant"].upper()
+            if q_filter == "q4" and not any(x in q_name for x in ["Q4_", "IQ4"]):
+                continue
+            elif q_filter == "q5_q6" and not any(x in q_name for x in ["Q5_", "Q6_"]):
+                continue
+            elif q_filter == "q8" and "Q8_" not in q_name:
+                continue
+            elif q_filter == "iq" and "IQ" not in q_name:
+                continue
+
+            size_gb = f.get("size_gb", 0.0)
+
+            # Donanım Uyumluluk Rozeti
+            if size_gb <= vram_tot * 0.90:
+                compat_badge = "<span style='background:#1b3b2b; color:#9ece6a; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; border:1px solid #9ece6a;'>🟢 GPU VRAM</span>"
+                compat_tip = f"Model boyutu ({size_gb:.1f} GB), VRAM kapasitenize ({vram_tot:.1f} GB) tam sığar."
+            elif size_gb <= (ram_tot * 0.85):
+                compat_badge = "<span style='background:#3b361b; color:#e0af68; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; border:1px solid #e0af68;'>🟡 RAM Hibrit</span>"
+                compat_tip = f"Model boyutu ({size_gb:.1f} GB) VRAM'i aşar ama sistem belleğinde ({ram_tot:.1f} GB RAM) rahat çalışır."
+            else:
+                compat_badge = "<span style='background:#3b1b24; color:#f7768e; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:bold; border:1px solid #f7768e;'>🔴 Bellek Aşımı</span>"
+                compat_tip = f"Model boyutu ({size_gb:.1f} GB) sistem belleğini aşabilir."
+
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 58))
+
+            row_w = QFrame()
+            row_w.setFixedHeight(58)
+            row_w.setStyleSheet("""
+                QFrame {
+                    background: #1f2335;
+                    border: 1px solid #292e42;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    border: 1px solid #3b4261;
+                    background: #24283b;
+                }
+            """)
+            h = QHBoxLayout(row_w)
+            h.setContentsMargins(10, 5, 10, 5)
+            h.setSpacing(10)
+
+            v_info = QVBoxLayout()
+            v_info.setSpacing(2)
+            v_info.setContentsMargins(0, 0, 0, 0)
+
+            lbl_fn = QLabel(f"<span style='font-size:12px; font-weight:bold; color:#c0caf5;'>{f['filename']}</span>")
+            lbl_fn.setStyleSheet("border: none; background: transparent;")
+
+            sub_txt = (
+                f"<span style='color:#7aa2f7; font-size:11px;'>Quant: <b>{f['quant']}</b></span>"
+                f"<span style='color:#565f89; font-size:11px;'>  •  </span>"
+                f"<span style='color:#73daca; font-size:11px;'>Boyut: <b>{f['size_gb']} GB</b></span>  {compat_badge}"
             )
-            lbl.setWordWrap(True)
-            btn_dl = QPushButton("⬇️ İndir")
-            btn_dl.setFixedSize(85, 28)
-            btn_dl.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold;")
+            lbl_sub = QLabel(sub_txt)
+            lbl_sub.setStyleSheet("border: none; background: transparent;")
+            lbl_sub.setToolTip(compat_tip)
+
+            v_info.addWidget(lbl_fn)
+            v_info.addWidget(lbl_sub)
+
+            btn_dl = QPushButton("⬇️ İndir (4x)")
+            btn_dl.setFixedSize(100, 30)
+            btn_dl.setStyleSheet("""
+                QPushButton {
+                    background: #7aa2f7;
+                    color: #15161e;
+                    font-weight: bold;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background: #89b4fa;
+                }
+            """)
             btn_dl.clicked.connect(lambda _, file_info=f: self.start_hf_download(file_info))
 
-            h.addWidget(lbl, 1)
+            h.addLayout(v_info, 1)
             h.addWidget(btn_dl)
-            item.setSizeHint(row_w.sizeHint())
+
             self.list_hf_files.addItem(item)
             self.list_hf_files.setItemWidget(item, row_w)
 
+
+    # ============================================================
+    # İNDİRİLENLER SEKMESİ VE İNDİRME YÖNETİMİ
+    # ============================================================
     def init_tab_downloads(self):
         tab = QWidget()
         l = QVBoxLayout(tab)
-        self.lbl_dl_header = QLabel()
+        l.setContentsMargins(10, 10, 10, 10)
+        l.setSpacing(8)
+        self.lbl_dl_header = QLabel("<b>Aktif ve Tamamlanan İndirmeler</b>")
         l.addWidget(self.lbl_dl_header)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.dl_container = QWidget()
         self.dl_layout = QVBoxLayout(self.dl_container)
-        self.dl_layout.setSpacing(8)
-        self.lbl_dl_empty = QLabel()
-        self.lbl_dl_empty.setStyleSheet("color: #565f89; padding: 15px;")
-        self.dl_layout.addWidget(self.lbl_dl_empty)
+        self.dl_layout.setContentsMargins(4, 4, 4, 4)
+        self.dl_layout.setSpacing(6)
         self.dl_layout.addStretch()
+
+        self.lbl_dl_empty = QLabel("Henüz aktif veya tamamlanan indirme yok.")
+        self.lbl_dl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_dl_empty.setStyleSheet("color: #565f89; font-size: 13px; margin-top: 30px;")
+        self.dl_layout.insertWidget(0, self.lbl_dl_empty)
+
         scroll.setWidget(self.dl_container)
         l.addWidget(scroll, 1)
         self.tabs.addTab(tab, "İndirilenler")
+        self.restore_persisted_downloads()
+
+    def restore_persisted_downloads(self):
+        saved_dls = self.cfg.get("persistent_downloads", {})
+        if not saved_dls:
+            return
+
+        for task_id, dinfo in list(saved_dls.items()):
+            dest = dinfo.get("dest_path", "")
+            part = dest + ".part"
+            status = dinfo.get("status", "paused")
+
+            if os.path.exists(dest) and not os.path.exists(part):
+                status = "completed"
+
+            if not os.path.exists(dest) and not os.path.exists(part):
+                continue
+
+            self.lbl_dl_empty.hide()
+            pct = dinfo.get("pct", 0)
+            stats = dinfo.get("stats_text", "")
+
+            widget = DownloadItemWidget(
+                task_id=task_id,
+                filename=dinfo.get("filename", os.path.basename(dest)),
+                repo_id=dinfo.get("repo_id", "HuggingFace"),
+                parent_app=self,
+                worker=None,
+                initial_state="paused" if status != "completed" else "completed",
+                initial_pct=pct,
+                stats_text=stats
+            )
+            self.dl_layout.insertWidget(0, widget)
+            self.active_downloads[task_id] = (None, widget)
+
+    def update_persisted_download_state(self, task_id, status, pct=None, stats_text=None):
+        if "persistent_downloads" not in self.cfg:
+            self.cfg["persistent_downloads"] = {}
+        if task_id in self.cfg["persistent_downloads"]:
+            self.cfg["persistent_downloads"][task_id]["status"] = status
+            if pct is not None:
+                self.cfg["persistent_downloads"][task_id]["pct"] = pct
+            if stats_text is not None:
+                self.cfg["persistent_downloads"][task_id]["stats_text"] = stats_text
+            save_json(CONFIG_FILE, self.cfg)
+
+    def resume_download_task(self, task_id):
+        dinfo = self.cfg.get("persistent_downloads", {}).get(task_id)
+        if not dinfo:
+            return
+
+        token = self.cfg.get("hf_token", "")
+        worker = DownloadWorker(
+            task_id=task_id,
+            url=dinfo["url"],
+            dest_path=dinfo["dest_path"],
+            token=token,
+            expected_sha256=dinfo.get("sha256", ""),
+            num_threads=4
+        )
+
+        if task_id in self.active_downloads:
+            _, widget = self.active_downloads[task_id]
+            widget.set_worker(worker)
+            self.active_downloads[task_id] = (worker, widget)
+
+        worker.progress.connect(self.on_dl_progress)
+        worker.status_changed.connect(lambda tid, st, w=widget: self.on_dl_status_changed(tid, st, w))
+        worker.finished_dl.connect(self.on_dl_finished)
+        worker.error.connect(self.on_dl_error)
+        worker.start()
+        self.update_persisted_download_state(task_id, "downloading")
+
+    def remove_download_task(self, task_id):
+        if "persistent_downloads" in self.cfg and task_id in self.cfg["persistent_downloads"]:
+            dinfo = self.cfg["persistent_downloads"].pop(task_id)
+            save_json(CONFIG_FILE, self.cfg)
+            part = dinfo.get("dest_path", "") + ".part"
+            state_file = dinfo.get("dest_path", "") + ".state.json"
+            if os.path.exists(part):
+                try: os.remove(part)
+                except Exception: pass
+            if os.path.exists(state_file):
+                try: os.remove(state_file)
+                except Exception: pass
+        if task_id in self.active_downloads:
+            _, widget = self.active_downloads.pop(task_id)
+            widget.deleteLater()
+        if not self.active_downloads:
+            self.lbl_dl_empty.show()
+
+    def on_dl_status_changed(self, task_id, status, widget):
+        if status == "verifying":
+            widget.lbl_state.setText("🔍 Bütünlük Doğrulanıyor (SHA-256)...")
+            widget.lbl_state.setStyleSheet("color: #bb9af7; font-weight: bold; font-size: 11px;")
+            widget.btn_pause.setEnabled(False)
+        elif status == "completed":
+            widget.lbl_state.setText("✅ Doğrulandı & Hazır")
+            widget.lbl_state.setStyleSheet("color: #9ece6a; font-weight: bold; font-size: 11px;")
+            widget.btn_pause.hide()
+            widget.btn_cancel.setText("🗑️ Kaldır")
+        elif status == "paused":
+            widget.lbl_state.setText("⏸ Duraklatıldı")
+            widget.lbl_state.setStyleSheet("color: #e0af68; font-size: 11px;")
+        elif status == "downloading":
+            widget.lbl_state.setText("⚡ 4x Hızlı İndiriliyor...")
+            widget.lbl_state.setStyleSheet("color: #7dcfff; font-size: 11px;")
+
+    def on_dl_progress(self, task_id, pct, dl_mb, total_mb, speed_mb):
+        if task_id in self.active_downloads:
+            _, w = self.active_downloads[task_id]
+            w.prog.setValue(pct)
+            txt = f"{dl_mb:.1f} / {total_mb:.1f} MB ({speed_mb:.1f} MB/s)"
+            w.lbl_stats.setText(txt)
+            if pct % 5 == 0:
+                self.update_persisted_download_state(task_id, "downloading", pct=pct, stats_text=txt)
+
+    def on_dl_finished(self, task_id, dest_path):
+        if task_id in self.active_downloads:
+            _, w = self.active_downloads[task_id]
+            w.lbl_state.setText("✅ Doğrulandı & Hazır")
+            w.lbl_state.setStyleSheet("color: #9ece6a; font-weight: bold; font-size: 11px;")
+            w.btn_pause.hide()
+            w.btn_cancel.setText("🗑️ Kaldır")
+        self.update_persisted_download_state(task_id, "completed", pct=100)
+        # Modelleri yeniden tara
+        for m_name in ["scan_local_models", "rescan_models", "refresh_models"]:
+            if hasattr(self, m_name):
+                getattr(self, m_name)()
+                break
+
+    def on_dl_error(self, task_id, err_msg):
+        if task_id in self.active_downloads:
+            _, w = self.active_downloads[task_id]
+            w.lbl_state.setText(f"❌ Hata: {err_msg[:40]}")
+            w.lbl_state.setStyleSheet("color: #f7768e; font-size: 11px;")
+            w.lbl_state.setToolTip(err_msg)
+            w.btn_pause.setText("▶ Tekrar Dene")
+            w.btn_pause.setEnabled(True)
+        self.update_persisted_download_state(task_id, "paused")
 
     def start_hf_download(self, file_info):
         target_dir = self.cfg.get("last_folder", "")
@@ -2303,7 +2906,18 @@ class TrayAIApp(QMainWindow):
             save_json(CONFIG_FILE, self.cfg)
             self.lbl_folder.setText(f".../{os.path.basename(target_dir)}")
 
-        dest_path = os.path.join(target_dir, file_info["filename"])
+        # LM Studio Tarzı Klasörleme: hedef_klasor / yayinci / model_adi / dosya.gguf
+        repo_id = file_info.get("repo_id", "").strip()
+        if "/" in repo_id:
+            publisher, repo_name = repo_id.split("/", 1)
+            model_dest_dir = os.path.join(target_dir, publisher, repo_name)
+        elif repo_id:
+            model_dest_dir = os.path.join(target_dir, repo_id)
+        else:
+            model_dest_dir = target_dir
+
+        os.makedirs(model_dest_dir, exist_ok=True)
+        dest_path = os.path.join(model_dest_dir, file_info["filename"])
         task_id = f"{file_info['repo_id']}/{file_info['filename']}"
         if task_id in self.active_downloads:
             self.tabs.setCurrentIndex(5)
@@ -2311,10 +2925,34 @@ class TrayAIApp(QMainWindow):
 
         self.lbl_dl_empty.hide()
         token = self.cfg.get("hf_token", "")
-        worker = DownloadWorker(task_id=task_id, url=file_info["url"], dest_path=dest_path, token=token)
-        widget = DownloadItemWidget(task_id, file_info["filename"], file_info["repo_id"], worker)
+        sha256_val = file_info.get("sha256", "")
+        worker = DownloadWorker(
+            task_id=task_id,
+            url=file_info["url"],
+            dest_path=dest_path,
+            token=token,
+            expected_sha256=sha256_val,
+            num_threads=4
+        )
+        widget = DownloadItemWidget(task_id, file_info["filename"], file_info["repo_id"], self, worker=worker)
         self.dl_layout.insertWidget(0, widget)
         self.active_downloads[task_id] = (worker, widget)
+
+        worker.status_changed.connect(lambda tid, st, w=widget: self.on_dl_status_changed(tid, st, w))
+
+        if "persistent_downloads" not in self.cfg:
+            self.cfg["persistent_downloads"] = {}
+        self.cfg["persistent_downloads"][task_id] = {
+            "url": file_info["url"],
+            "dest_path": dest_path,
+            "filename": file_info["filename"],
+            "repo_id": file_info["repo_id"],
+            "sha256": sha256_val,
+            "status": "downloading",
+            "pct": 0,
+            "stats_text": "0.0 MB / ? MB"
+        }
+        save_json(CONFIG_FILE, self.cfg)
 
         worker.progress.connect(self.on_dl_progress)
         worker.finished_dl.connect(self.on_dl_finished)
@@ -2327,7 +2965,10 @@ class TrayAIApp(QMainWindow):
         if task_id in self.active_downloads:
             _, w = self.active_downloads[task_id]
             w.prog.setValue(pct)
-            w.lbl_stats.setText(f"{dl_mb:.1f} / {total_mb:.1f} MB ({speed_mb:.1f} MB/s)")
+            txt = f"{dl_mb:.1f} / {total_mb:.1f} MB ({speed_mb:.1f} MB/s)"
+            w.lbl_stats.setText(txt)
+            if pct % 5 == 0:
+                self.update_persisted_download_state(task_id, "downloading", pct=pct, stats_text=txt)
 
     def on_dl_finished(self, task_id, dest_path):
         if task_id in self.active_downloads:
@@ -2336,7 +2977,8 @@ class TrayAIApp(QMainWindow):
             w.lbl_state.setText("✅ Tamamlandı! Model listesine eklendi.")
             w.lbl_state.setStyleSheet("color: #9ece6a; font-weight: bold;")
             w.btn_pause.setEnabled(False)
-            w.btn_cancel.setEnabled(False)
+            w.btn_cancel.setText("🗑️ Kaldır")
+        self.update_persisted_download_state(task_id, "completed", pct=100)
         folder = self.cfg.get("last_folder", "")
         if folder and os.path.isdir(folder):
             self.load_from_sqlite_instant(folder)
@@ -2530,6 +3172,41 @@ class TrayAIApp(QMainWindow):
         self.chk_cont_batch.setChecked(True)
         self.chk_mmap.setChecked(True)
         self.recalculate_memory_estimate()
+
+    def apply_sampler_preset(self, index):
+        key = self.cb_preset.currentData()
+        if key == "coding":
+            self.spin_temp.setValue(0.15)
+            self.spin_topp.setValue(0.80)
+            self.spin_minp.setValue(0.05)
+            self.spin_topk.setValue(20)
+            self.spin_rep_pen.setValue(1.05)
+            self.spin_dry_mult.setValue(0.0)
+            self.spin_xtc_prob.setValue(0.0)
+        elif key == "reasoning":
+            self.spin_temp.setValue(0.60)
+            self.spin_topp.setValue(0.95)
+            self.spin_minp.setValue(0.00)
+            self.spin_topk.setValue(20)
+            self.spin_rep_pen.setValue(1.00)
+            self.spin_dry_mult.setValue(0.0)
+            self.spin_xtc_prob.setValue(0.0)
+        elif key == "creative":
+            self.spin_temp.setValue(0.85)
+            self.spin_topp.setValue(0.92)
+            self.spin_minp.setValue(0.07)
+            self.spin_topk.setValue(40)
+            self.spin_rep_pen.setValue(1.15)
+            self.spin_dry_mult.setValue(0.80)
+            self.spin_xtc_prob.setValue(0.10)
+        elif key == "json":
+            self.spin_temp.setValue(0.00)
+            self.spin_topp.setValue(1.00)
+            self.spin_minp.setValue(0.00)
+            self.spin_topk.setValue(0)
+            self.spin_rep_pen.setValue(1.00)
+            self.spin_dry_mult.setValue(0.0)
+            self.spin_xtc_prob.setValue(0.0)
 
     def recalculate_memory_estimate(self):
         if not self.active_model_info:
@@ -2930,6 +3607,8 @@ class TrayAIApp(QMainWindow):
             "prompt_cache": self.chk_prompt_cache.isChecked() if hasattr(self, "chk_prompt_cache") else True,
             "rep_pen": self.spin_rep_pen.value(),
             "rope_scaling": self.cb_rope_scaling.currentText(),
+            "context_shift": self.chk_ctx_shift.isChecked() if hasattr(self, "chk_ctx_shift") else True,
+            "preset_idx": self.cb_preset.currentIndex() if hasattr(self, "cb_preset") else 0,
             "custom_flags": self.input_custom_flags.text().strip()
         }
         self.cfg["per_model_cfg"][self.selected_model_path] = m_cfg
@@ -2960,6 +3639,12 @@ class TrayAIApp(QMainWindow):
             self.chk_prompt_cache.setChecked(saved["prompt_cache"])
         if "rep_pen" in saved: self.spin_rep_pen.setValue(saved["rep_pen"])
         if "rope_scaling" in saved: self.cb_rope_scaling.setCurrentText(saved["rope_scaling"])
+        if "context_shift" in saved and hasattr(self, "chk_ctx_shift"):
+            self.chk_ctx_shift.setChecked(saved["context_shift"])
+        if "preset_idx" in saved and hasattr(self, "cb_preset"):
+            self.cb_preset.blockSignals(True)
+            self.cb_preset.setCurrentIndex(saved["preset_idx"])
+            self.cb_preset.blockSignals(False)
         if "custom_flags" in saved: self.input_custom_flags.setText(saved["custom_flags"])
         return True
 
@@ -3225,11 +3910,15 @@ class TrayAIApp(QMainWindow):
         if self.chk_cont_batch.isChecked(): extra.append("-cb")
         if not self.chk_mmap.isChecked(): extra.append("--no-mmap")
         if self.chk_mlock.isChecked(): extra.append("--mlock")
+        if hasattr(self, "chk_ctx_shift"):
+            if self.chk_ctx_shift.isChecked():
+                extra.append("--context-shift")
+            else:
+                extra.append("--no-context-shift")
         if not self.chk_offload_kv.isChecked(): extra.append("-nkvo")
 
         if self.chk_tools.isChecked():
             extra.append("--jinja")
-            extra.append("--special")
 
         active_gpu_ids = [str(gid) for gid, btn in self.gpu_toggles.items() if btn.isChecked()]
         env_vars = {}
@@ -3242,17 +3931,42 @@ class TrayAIApp(QMainWindow):
             env_vars["HIP_VISIBLE_DEVICES"] = devs_csv
             env_vars["CUDA_VISIBLE_DEVICES"] = devs_csv
 
+            # Birincil (Main) GPU tayini (Visible devices içindeki sırasına göre)
+            sel_main_gid = str(self.cb_main_gpu.currentData()) if hasattr(self, "cb_main_gpu") else active_gpu_ids[0]
+            if sel_main_gid in active_gpu_ids:
+                main_gpu_idx = active_gpu_ids.index(sel_main_gid)
+            else:
+                main_gpu_idx = 0
+
             if len(active_gpu_ids) == 1:
                 extra.extend(["--split-mode", "none", "--main-gpu", "0"])
             else:
-                extra.extend(["--split-mode", self.cb_split_mode.currentData()])
-                # 2 GPU aktifse kullanıcı tanımlı oranla --tensor-split ekle
-                if len(active_gpu_ids) == 2:
-                    ratio = getattr(self, "slider_gpu_ratio", None)
-                    val = ratio.value() if ratio else 50
-                    r0 = max(1, val)
-                    r1 = max(1, 100 - val)
-                    extra.extend(["-ts", f"{r0},{r1}"])
+                split_mode = self.cb_split_mode.currentData() if hasattr(self, "cb_split_mode") else "layer"
+                extra.extend(["--split-mode", split_mode, "--main-gpu", str(main_gpu_idx)])
+
+                calc_mode = self.cb_split_calc.currentData() if hasattr(self, "cb_split_calc") else "auto"
+                if calc_mode == "auto":
+                    # Rezerv düşülmüş net VRAM oranlaması
+                    proportions = []
+                    for gid in active_gpu_ids:
+                        tot_vram = getattr(self, "gpu_vram_widgets", {}).get(int(gid), {}).get("total_gb", 8.0)
+                        hr_spin = getattr(self, "gpu_headroom_spins", {}).get(gid)
+                        headroom = hr_spin.value() if hr_spin else 2.5
+                        usable = max(0.2, tot_vram - headroom)
+                        proportions.append(f"{usable:.1f}")
+                    extra.extend(["-ts", ",".join(proportions)])
+                else:
+                    if len(active_gpu_ids) == 2:
+                        val = self.slider_gpu_ratio.value() if hasattr(self, "slider_gpu_ratio") else 50
+                        r0 = max(1, val)
+                        r1 = max(1, 100 - val)
+                        extra.extend(["-ts", f"{r0},{r1}"])
+
+        # KV Cache Barındırma Konumu
+        kv_target = self.cb_kv_placement.currentData() if hasattr(self, "cb_kv_placement") else "gpu"
+        if kv_target == "ram" or not self.chk_offload_kv.isChecked():
+            if "-nkvo" not in extra:
+                extra.append("-nkvo")
 
         if self.cb_thinking_effort.isEnabled():
             eff_idx = self.cb_thinking_effort.currentIndex()
