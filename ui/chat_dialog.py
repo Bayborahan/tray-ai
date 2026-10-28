@@ -190,7 +190,6 @@ class TerminalActionWidget(QFrame):
         h_btns.addStretch()
         v.addLayout(h_btns)
 
-        # Otonom çalıştırma kontrolü
         destructive_keywords = ["sudo", "rm ", "mkfs", "dd ", "reboot", "shutdown", "poweroff", "kill", "> /dev/"]
         is_safe = not any(k in self.command.lower() for k in destructive_keywords)
         if auto_exec and is_safe:
@@ -209,7 +208,6 @@ class TerminalActionWidget(QFrame):
             self.btn_feed_model.setText("✓ Otonom İletildi")
             self.btn_feed_model.setEnabled(False)
             self.btn_feed_model.show()
-            # Çıktıyı doğrudan modele gönder
             QTimer.singleShot(400, self.feed_output_to_model)
 
         self.worker = CommandExecWorker(self.command, None)
@@ -374,7 +372,7 @@ class AssistantBubble(QFrame):
         self.response_buffer += chunk
         self.lbl_response.setText(self.response_buffer)
 
-    def finalize_markdown(self):
+    def finalize_markdown(self, suppress_auto_run=False):
         if self.response_buffer:
             self.lbl_response.setTextFormat(Qt.TextFormat.MarkdownText)
             self.lbl_response.setText(self.response_buffer)
@@ -385,7 +383,7 @@ class AssistantBubble(QFrame):
             for raw_cmd in bash_matches:
                 clean_c = raw_cmd.strip()
                 if clean_c and not clean_c.startswith("#"):
-                    auto_flag = getattr(self.chat_dialog, "chk_autopilot", None) and self.chat_dialog.chk_autopilot.isChecked()
+                    auto_flag = False if suppress_auto_run else (getattr(self.chat_dialog, "chk_autopilot", None) and self.chat_dialog.chk_autopilot.isChecked())
                     term_widget = TerminalActionWidget(clean_c, self.chat_dialog, auto_exec=auto_flag)
                     self.layout.addWidget(term_widget)
 
@@ -410,9 +408,15 @@ class ChatStreamWorker(QThread):
         self.model_id = model_id
         self.messages = list(messages)
         self._is_aborted = False
+        self._resp = None
 
     def abort(self):
         self._is_aborted = True
+        try:
+            if self._resp:
+                self._resp.close()
+        except Exception:
+            pass
 
     def run(self):
         url = f"http://127.0.0.1:{self.port}/v1/chat/completions"
@@ -430,12 +434,13 @@ class ChatStreamWorker(QThread):
         in_thinking_tag = False
 
         try:
-            resp = requests.post(url, json=payload, stream=True, timeout=180)
-            if resp.status_code != 200:
-                self.error_occurred.emit(f"HTTP {resp.status_code}: {resp.text[:250]}")
+            self._resp = requests.post(url, json=payload, stream=True, timeout=180)
+            if self._resp.status_code != 200:
+                if not self._is_aborted:
+                    self.error_occurred.emit(f"HTTP {self._resp.status_code}: {self._resp.text[:250]}")
                 return
 
-            for line in resp.iter_lines():
+            for line in self._resp.iter_lines():
                 if self._is_aborted:
                     break
                 if not line:
@@ -458,7 +463,8 @@ class ChatStreamWorker(QThread):
                             if first_token_time is None:
                                 first_token_time = now
                             token_count += 1
-                            self.chunk_received.emit(reasoning_part, True)
+                            if not self._is_aborted:
+                                self.chunk_received.emit(reasoning_part, True)
 
                         if content_part:
                             if first_token_time is None:
@@ -471,16 +477,16 @@ class ChatStreamWorker(QThread):
                             if "</think>" in content_part:
                                 in_thinking_tag = False
                                 parts = content_part.split("</think>")
-                                if parts[0]:
+                                if parts[0] and not self._is_aborted:
                                     self.chunk_received.emit(parts[0], True)
-                                if len(parts) > 1 and parts[1]:
+                                if len(parts) > 1 and parts[1] and not self._is_aborted:
                                     self.chunk_received.emit(parts[1], False)
                                 continue
 
                             for st in ["<|im_end|>", "<end_of_turn>", "<|eot_id|>", "<|endoftext|>", "</s>", "<|turn_end|>", "<turn>"]:
                                 content_part = content_part.replace(st, "")
 
-                            if content_part:
+                            if content_part and not self._is_aborted:
                                 self.chunk_received.emit(content_part, in_thinking_tag)
 
                     except Exception:
@@ -491,12 +497,19 @@ class ChatStreamWorker(QThread):
             gen_duration = max(0.01, end_time - (first_token_time or start_time))
             speed = (token_count / gen_duration) if token_count > 0 else 0.0
 
-            self.stats_ready.emit(ttft, speed, token_count)
-            self.finished_ok.emit()
+            if not self._is_aborted:
+                self.stats_ready.emit(ttft, speed, token_count)
+                self.finished_ok.emit()
 
         except Exception as e:
             if not self._is_aborted:
                 self.error_occurred.emit(str(e))
+        finally:
+            try:
+                if self._resp:
+                    self._resp.close()
+            except Exception:
+                pass
 
 
 class ChatTesterDialog(QDialog):
@@ -513,6 +526,7 @@ class ChatTesterDialog(QDialog):
         self.worker = None
         self.current_active_bubble = None
         self.current_attached_image = None
+        self.is_generating = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -606,6 +620,7 @@ class ChatTesterDialog(QDialog):
         self.frame_img_preview.hide()
         layout.addWidget(self.frame_img_preview)
 
+        # Alt Kontrol Çubuğu (Birleşik Buton Mimarisi)
         bot_box = QHBoxLayout()
         bot_box.setSpacing(6)
 
@@ -622,31 +637,51 @@ class ChatTesterDialog(QDialog):
         self.input_prompt = QLineEdit()
         self.input_prompt.setPlaceholderText("Mesaj yazın veya Linux sisteminizle ilgili bir soru sorun...")
         self.input_prompt.setFixedHeight(38)
-        self.input_prompt.returnPressed.connect(self.send_message)
+        self.input_prompt.returnPressed.connect(self.on_action_triggered)
         bot_box.addWidget(self.input_prompt, 1)
 
-        self.btn_send = QPushButton("➤ Gönder")
-        self.btn_send.setAutoDefault(True)
-        self.btn_send.setDefault(True)
-        self.btn_send.setFixedHeight(38)
-        self.btn_send.setFixedWidth(85)
-        self.btn_send.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold; font-size: 12px; border-radius: 6px;")
-        self.btn_send.clicked.connect(self.send_message)
-        bot_box.addWidget(self.btn_send)
-
-        self.btn_stop = QPushButton("🛑")
-        self.btn_stop.setAutoDefault(False)
-        self.btn_stop.setDefault(False)
-        self.btn_stop.setFixedHeight(38)
-        self.btn_stop.setFixedWidth(38)
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold; border-radius: 6px;")
-        self.btn_stop.clicked.connect(self.abort_generation)
-        bot_box.addWidget(self.btn_stop)
+        # BİRLEŞİK GÖNDER / DURDUR BUTONU
+        self.btn_action = QPushButton("➤ Gönder")
+        self.btn_action.setAutoDefault(True)
+        self.btn_action.setDefault(True)
+        self.btn_action.setFixedHeight(38)
+        self.btn_action.setFixedWidth(95)
+        self.btn_action.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold; font-size: 12px; border-radius: 6px;")
+        self.btn_action.clicked.connect(self.on_action_triggered)
+        bot_box.addWidget(self.btn_action)
 
         layout.addLayout(bot_box)
         self.init_system_persona()
         self.update_model_header()
+
+    def set_generating_state(self, generating):
+        self.is_generating = generating
+        if generating:
+            self.btn_action.setText("⏹ Durdur")
+            self.btn_action.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold; font-size: 12px; border-radius: 6px;")
+            self.btn_action.setToolTip("Yanıt üretimini durdur (Esc)")
+            self.input_prompt.setEnabled(False)
+            self.btn_attach.setEnabled(False)
+        else:
+            self.btn_action.setText("➤ Gönder")
+            self.btn_action.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold; font-size: 12px; border-radius: 6px;")
+            self.btn_action.setToolTip("Mesajı Gönder (Enter)")
+            self.input_prompt.setEnabled(True)
+            self.btn_attach.setEnabled(True)
+            self.input_prompt.setFocus()
+
+    def on_action_triggered(self):
+        if self.is_generating:
+            self.abort_generation()
+        else:
+            self.send_message()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.is_generating:
+            self.abort_generation()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def copy_to_clip(self, text):
         QApplication.clipboard().setText(text)
@@ -727,15 +762,17 @@ class ChatTesterDialog(QDialog):
         if m_id:
             self.lbl_model_badge.setText(f"🤖 <b>Aktif Model:</b> {m_id}")
             self.input_prompt.setEnabled(True)
-            self.btn_send.setEnabled(True)
+            self.btn_action.setEnabled(True)
             self.btn_attach.setEnabled(True)
         else:
             self.lbl_model_badge.setText("⚠️ <b>Bellekte Model Yok</b> — Lütfen önce Modeller sekmesinden bir model yükleyin.")
             self.input_prompt.setEnabled(False)
-            self.btn_send.setEnabled(False)
+            self.btn_action.setEnabled(False)
             self.btn_attach.setEnabled(False)
 
     def clear_chat(self):
+        if self.is_generating:
+            self.abort_generation()
         while self.chat_layout.count() > 1:
             item = self.chat_layout.takeAt(0)
             if item.widget():
@@ -781,6 +818,8 @@ class ChatTesterDialog(QDialog):
             QMessageBox.critical(self, "Hata", f"Dosya kaydedilemedi:\n{e}")
 
     def send_automated_prompt(self, prompt_text, visible_title=None):
+        if self.is_generating:
+            return
         display_text = visible_title or prompt_text
         self.messages.append({"role": "user", "content": prompt_text})
 
@@ -799,11 +838,7 @@ class ChatTesterDialog(QDialog):
         self.current_active_bubble = ai_b
 
         QTimer.singleShot(15, self.scroll_to_bottom)
-
-        self.btn_send.setEnabled(False)
-        self.input_prompt.setEnabled(False)
-        self.btn_attach.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.set_generating_state(True)
 
         self.worker = ChatStreamWorker(self.engine_port, m_id, self.messages)
         self.worker.chunk_received.connect(self.on_chunk)
@@ -813,6 +848,9 @@ class ChatTesterDialog(QDialog):
         self.worker.start()
 
     def send_message(self):
+        if self.is_generating:
+            return
+
         raw_text = self.input_prompt.text().strip()
         has_img = self.current_attached_image is not None
 
@@ -855,11 +893,7 @@ class ChatTesterDialog(QDialog):
         self.current_active_bubble = ai_b
 
         QTimer.singleShot(15, self.scroll_to_bottom)
-
-        self.btn_send.setEnabled(False)
-        self.input_prompt.setEnabled(False)
-        self.btn_attach.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.set_generating_state(True)
 
         self.worker = ChatStreamWorker(self.engine_port, m_id, self.messages)
         self.worker.chunk_received.connect(self.on_chunk)
@@ -869,7 +903,7 @@ class ChatTesterDialog(QDialog):
         self.worker.start()
 
     def on_chunk(self, chunk, is_thinking):
-        if not self.current_active_bubble:
+        if not self.current_active_bubble or not self.is_generating:
             return
         if is_thinking:
             self.current_active_bubble.append_thinking(chunk)
@@ -878,32 +912,61 @@ class ChatTesterDialog(QDialog):
         self.scroll_to_bottom()
 
     def on_stats(self, ttft, speed, tokens):
-        if self.current_active_bubble:
+        if self.current_active_bubble and self.is_generating:
             self.current_active_bubble.set_stats(ttft, speed, tokens)
             self.scroll_to_bottom()
 
     def on_finish(self):
+        if not self.is_generating:
+            return
+        self.is_generating = False
         if self.current_active_bubble:
             self.current_active_bubble.finalize_markdown()
             full_ans = self.current_active_bubble.response_buffer
             if full_ans:
                 self.messages.append({"role": "assistant", "content": full_ans})
-        self.btn_send.setEnabled(True)
-        self.input_prompt.setEnabled(True)
-        self.btn_attach.setEnabled(True)
-        self.btn_stop.setEnabled(False)
-        self.input_prompt.setFocus()
+        self.set_generating_state(False)
         self.scroll_to_bottom()
 
     def on_error(self, err):
+        if not self.is_generating:
+            return
         if self.current_active_bubble:
             self.current_active_bubble.set_error(err)
         self.on_finish()
 
     def abort_generation(self):
+        if not self.is_generating:
+            return
+        self.is_generating = False
+
         if self.worker:
+            try:
+                self.worker.chunk_received.disconnect()
+            except Exception:
+                pass
+            try:
+                self.worker.stats_ready.disconnect()
+            except Exception:
+                pass
+            try:
+                self.worker.finished_ok.disconnect()
+            except Exception:
+                pass
+            try:
+                self.worker.error_occurred.disconnect()
+            except Exception:
+                pass
             self.worker.abort()
-        self.btn_stop.setEnabled(False)
+            self.worker.wait(300)
+            self.worker = None
+
         if self.current_active_bubble:
-            self.current_active_bubble.append_response("\n\n🛑 *[Üretim kesildi]*")
-        self.on_finish()
+            self.current_active_bubble.append_response("\n\n🛑 *[Yanıt kullanıcı tarafından durduruldu]*")
+            self.current_active_bubble.finalize_markdown(suppress_auto_run=True)
+            full_ans = self.current_active_bubble.response_buffer
+            if full_ans:
+                self.messages.append({"role": "assistant", "content": full_ans})
+
+        self.set_generating_state(False)
+        self.scroll_to_bottom()
