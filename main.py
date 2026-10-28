@@ -540,6 +540,10 @@ class TrayAIApp(QMainWindow):
         self.selected_model_path = None
         self.selected_draft_path = None
         self.active_model_info = None
+        self.loaded_model_info = None
+        self.running_model_name = None
+        self.running_model_path = None
+        self._locked_running_model = None
         self.gpu_toggles = {}
         self.remote_tool_active = False
         self.active_downloads = {}
@@ -3567,86 +3571,26 @@ class TrayAIApp(QMainWindow):
     def on_rope_scaling_changed(self):
         if not self.active_model_info:
             return
-        scaling_type = self.cb_rope_scaling.currentText()
+        scaling_type = self.cb_rope_scaling.currentText().lower()
         base_ctx = self.active_model_info.get("base_context", self.active_model_info.get("max_context", 4096))
         scale = self.spin_rope_scale.value()
 
-        if scaling_type in ("yarn", "linear") and scale > 1.0:
-            target_max = int(base_ctx * scale)
-        elif scaling_type == "yarn" or self.active_model_info.get("has_yarn"):
-            target_max = max(base_ctx * 4, 262144)
+        is_scaling_active = ("yarn" in scaling_type or "linear" in scaling_type)
+
+        if is_scaling_active:
+            mult = max(scale, 4.0) if scale > 1.0 else 4.0
+            target_max = min(1048576, max(int(base_ctx * mult), 262144))
         else:
             target_max = base_ctx
+            if self.spin_ctx.value() > base_ctx:
+                self.spin_ctx.setValue(base_ctx)
+                self.slider_ctx.setValue(base_ctx)
 
         self.slider_ctx.setRange(512, target_max)
         self.spin_ctx.setRange(512, target_max)
         self.recalculate_memory_estimate()
-
-    def save_current_model_custom_config(self):
-        if not self.selected_model_path:
-            return
-        if "per_model_cfg" not in self.cfg:
-            self.cfg["per_model_cfg"] = {}
-
-        m_cfg = {
-            "ngl": self.spin_ngl.value(),
-            "ctx": self.spin_ctx.value(),
-            "temp": self.spin_temp.value(),
-            "topp": self.spin_topp.value(),
-            "minp": self.spin_minp.value(),
-            "topk": self.spin_topk.value(),
-            "threads": self.spin_threads.value(),
-            "threads_batch": self.spin_threads_batch.value(),
-            "batch": self.spin_batch.value(),
-            "ubatch": self.spin_ubatch.value(),
-            "cache_k": self.cb_cache_k.currentText(),
-            "cache_v": self.cb_cache_v.currentText(),
-            "fa": self.chk_fa.isChecked(),
-            "mmap": self.chk_mmap.isChecked(),
-            "mlock": self.chk_mlock.isChecked(),
-            "prompt_cache": self.chk_prompt_cache.isChecked() if hasattr(self, "chk_prompt_cache") else True,
-            "rep_pen": self.spin_rep_pen.value(),
-            "rope_scaling": self.cb_rope_scaling.currentText(),
-            "context_shift": self.chk_ctx_shift.isChecked() if hasattr(self, "chk_ctx_shift") else True,
-            "preset_idx": self.cb_preset.currentIndex() if hasattr(self, "cb_preset") else 0,
-            "custom_flags": self.input_custom_flags.text().strip()
-        }
-        self.cfg["per_model_cfg"][self.selected_model_path] = m_cfg
-        self.cfg["last_selected_model"] = self.selected_model_path
-        save_json(CONFIG_FILE, self.cfg)
-
-    def restore_model_custom_config(self, path):
-        saved = self.cfg.get("per_model_cfg", {}).get(path, {})
-        if not saved:
-            return False
-
-        if "ngl" in saved: self.spin_ngl.setValue(saved["ngl"])
-        if "ctx" in saved: self.spin_ctx.setValue(saved["ctx"])
-        if "temp" in saved: self.spin_temp.setValue(saved["temp"])
-        if "topp" in saved: self.spin_topp.setValue(saved["topp"])
-        if "minp" in saved: self.spin_minp.setValue(saved["minp"])
-        if "topk" in saved: self.spin_topk.setValue(saved["topk"])
-        if "threads" in saved: self.spin_threads.setValue(saved["threads"])
-        if "threads_batch" in saved: self.spin_threads_batch.setValue(saved["threads_batch"])
-        if "batch" in saved: self.spin_batch.setValue(saved["batch"])
-        if "ubatch" in saved: self.spin_ubatch.setValue(saved["ubatch"])
-        if "cache_k" in saved: self.cb_cache_k.setCurrentText(saved["cache_k"])
-        if "cache_v" in saved: self.cb_cache_v.setCurrentText(saved["cache_v"])
-        if "fa" in saved: self.chk_fa.setChecked(saved["fa"])
-        if "mmap" in saved: self.chk_mmap.setChecked(saved["mmap"])
-        if "mlock" in saved: self.chk_mlock.setChecked(saved["mlock"])
-        if "prompt_cache" in saved and hasattr(self, "chk_prompt_cache"):
-            self.chk_prompt_cache.setChecked(saved["prompt_cache"])
-        if "rep_pen" in saved: self.spin_rep_pen.setValue(saved["rep_pen"])
-        if "rope_scaling" in saved: self.cb_rope_scaling.setCurrentText(saved["rope_scaling"])
-        if "context_shift" in saved and hasattr(self, "chk_ctx_shift"):
-            self.chk_ctx_shift.setChecked(saved["context_shift"])
-        if "preset_idx" in saved and hasattr(self, "cb_preset"):
-            self.cb_preset.blockSignals(True)
-            self.cb_preset.setCurrentIndex(saved["preset_idx"])
-            self.cb_preset.blockSignals(False)
-        if "custom_flags" in saved: self.input_custom_flags.setText(saved["custom_flags"])
-        return True
+        if hasattr(self, "save_model_full_config"):
+            self.save_model_full_config()
 
     def select_and_apply_model(self, path):
         if not path or path not in self.loaded_models:
@@ -3656,6 +3600,8 @@ class TrayAIApp(QMainWindow):
         if getattr(self, "selected_model_path", None) and self.selected_model_path != path:
             self.save_current_model_custom_config()
 
+        if getattr(self, "selected_model_path", None) and self.selected_model_path != path:
+            self.save_model_full_config(self.selected_model_path)
         self.selected_model_path = path
         info = self.loaded_models[path]
         self.active_model_info = info
@@ -3697,15 +3643,15 @@ class TrayAIApp(QMainWindow):
         rope_scale = float(extra_m.get("rope_scale", 1.0))
         rope_type = extra_m.get("rope_scaling_type", "none")
 
-        if rope_scale > 1.0 or "yarn" in rope_type or info.get("has_yarn"):
-            max_effective_ctx = max(int(base_ctx * max(rope_scale, 4.0)), 262144)
-            self.cb_rope_scaling.setCurrentText("yarn" if ("yarn" in rope_type or info.get("has_yarn")) else "linear")
-        else:
-            max_effective_ctx = base_ctx
-            self.cb_rope_scaling.setCurrentText("Auto (Varsayılan)")
+        # Tavan sınır KESİNLİKLE ve YALNIZCA modelin doğal fabrika bağlamıdır (base_context)
+        self.cb_rope_scaling.blockSignals(True)
+        self.cb_rope_scaling.setCurrentText("Auto (Varsayılan)")
+        self.cb_rope_scaling.blockSignals(False)
 
-        self.slider_ctx.setRange(512, max_effective_ctx)
-        self.spin_ctx.setRange(512, max_effective_ctx)
+        self.slider_ctx.setRange(512, base_ctx)
+        self.spin_ctx.setRange(512, base_ctx)
+        self.slider_ctx.setValue(base_ctx)
+        self.spin_ctx.setValue(base_ctx)
 
         # Varsayılan profil değerlerini ata
         self.spin_rope_base.setValue(float(extra_m.get("rope_freq_base", 10000.0)))
@@ -3718,7 +3664,7 @@ class TrayAIApp(QMainWindow):
         self.slider_ctx.setValue(base_ctx)
 
         # Eğer kullanıcı bu modele özel ayar yapmışsa onları geri yükle
-        has_custom = self.restore_model_custom_config(path)
+        has_custom = self.restore_model_full_config(path)
         if not has_custom:
             self.cfg.setdefault("per_model_cfg", {})[path] = {"ngl": layers, "ctx": base_ctx}
 
@@ -3766,13 +3712,21 @@ class TrayAIApp(QMainWindow):
             self.load_selected_model()
 
     def on_model_selected(self, item):
+        if hasattr(self, "_save_current_model_profile"):
+            self._save_current_model_profile()
         path = item.data(Qt.ItemDataRole.UserRole)
         self.select_and_apply_model(path)
+        self._refresh_model_action_ui()
+
 
     def get_current_active_model_id(self):
-        if self.selected_model_path and self.server_mgr.is_running():
-            return os.path.splitext(os.path.basename(self.selected_model_path))[0]
-        return ""
+        """Sohbet ve API için: Yalnızca bellekte gerçekten çalışan modeli döndürür"""
+        if hasattr(self, "server_mgr") and not self.server_mgr.is_running():
+            self.loaded_model_info = None
+            return None
+        if getattr(self, "loaded_model_info", None):
+            return self.loaded_model_info.get("alias") or os.path.basename(self.loaded_model_info.get("path", ""))
+        return None
 
     def get_gateway_models_list(self):
         models_dict = {}
@@ -3862,54 +3816,353 @@ class TrayAIApp(QMainWindow):
         except Exception:
             pass
 
+
+
+
+
+    def _get_model_key(self, m_info=None):
+        info = m_info or getattr(self, "active_model_info", None)
+        if not info:
+            return None
+        p = info.get("path") or info.get("filename") or info.get("name")
+        return os.path.basename(p) if p else None
+
+    def _save_active_model_settings(self):
+        """Geriye dönük uyumluluk köprüsü"""
+        if hasattr(self, "_save_current_model_profile"):
+            return self._save_current_model_profile()
+
+
+
+    def _get_running_model_name(self):
+        """Çubuk ve telemetri için YALNIZCA içeride koşan modelin adını döndürür"""
+        if getattr(self, "running_model_name", None):
+            return self.running_model_name
+        if getattr(self, "_locked_running_model", None):
+            return self._locked_running_model
+        if getattr(self, "loaded_model_info", None) and self.loaded_model_info.get("path"):
+            return os.path.basename(self.loaded_model_info["path"])
+        return "Model"
+
+    def _refresh_model_action_ui(self):
+        """Bellekte koşan model ile listede tıklanan modeli tamamen ayrıştırır"""
+        is_running = hasattr(self, "server_mgr") and self.server_mgr.is_running()
+        loaded_name = self._get_running_model_name() if is_running else None
+        selected_name = os.path.basename(self.active_model_info.get("path", "")) if getattr(self, "active_model_info", None) else None
+
+        # Sunucu çalışırken alttaki bar yazısı DAİMA bellekte koşan modele zorlanır
+        if is_running and loaded_name and hasattr(self, "lbl_load_stage"):
+            self.lbl_load_stage.setText(f"✅ {loaded_name} (%100)")
+
+        # 1. Sabit Bellek Rozeti
+        if hasattr(self, "lbl_running_model_badge"):
+            if is_running and loaded_name:
+                self.lbl_running_model_badge.setText(f"🟢 <b>Bellekte Çalışan:</b> {loaded_name[:35]}")
+                self.lbl_running_model_badge.setStyleSheet(
+                    "background: #1a2b25; color: #73daca; border: 1px solid #73daca; "
+                    "padding: 4px 8px; border-radius: 5px; font-size: 11px; font-weight: bold;"
+                )
+            else:
+                self.lbl_running_model_badge.setText("⚪ <b>Bellek Durumu:</b> Boş (Çalışan model yok)")
+                self.lbl_running_model_badge.setStyleSheet(
+                    "background: #1f2335; color: #7a829e; border: 1px solid #3b4261; "
+                    "padding: 4px 8px; border-radius: 5px; font-size: 11px;"
+                )
+
+        # 2. Şık ve Sade Aksiyon Butonu (Model ismi kalabalığı kaldırıldı)
+        target_btn = getattr(self, "btn_load_model", None) or getattr(self, "btn_load", None)
+        if target_btn:
+            if is_running and loaded_name and selected_name == loaded_name:
+                target_btn.setText("🛑 Modeli Durdur / Boşalt")
+                target_btn.setStyleSheet("background: #f7768e; color: #15161e; font-weight: bold; border-radius: 6px; padding: 7px;")
+            elif is_running and loaded_name and selected_name:
+                target_btn.setText("🔄 Seçili Modeli Yükle (Değiştir)")
+                target_btn.setStyleSheet("background: #e0af68; color: #15161e; font-weight: bold; border-radius: 6px; padding: 7px;")
+            elif selected_name:
+                target_btn.setText("⚡ Modeli Yükle")
+                target_btn.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold; border-radius: 6px; padding: 7px;")
+            else:
+                target_btn.setText("⚡ Bir Model Seçin")
+                target_btn.setStyleSheet("background: #3b4261; color: #a9b1d6; font-weight: bold; border-radius: 6px; padding: 7px;")
+
+
+    def _collect_all_current_settings(self):
+        """Ekranda görünen istisnasız tüm model parametrelerini toplar"""
+        return {
+            # 1. Bağlam & Katman
+            "ctx": self.spin_ctx.value() if hasattr(self, "spin_ctx") else 8192,
+            "ngl": self.spin_ngl.value() if hasattr(self, "spin_ngl") else 33,
+            "context_shift": self.chk_ctx_shift.isChecked() if hasattr(self, "chk_ctx_shift") else True,
+
+            # 2. KV Cache & Bellek
+            "cache_k": self.cb_cache_k.currentText() if hasattr(self, "cb_cache_k") else "f16",
+            "cache_v": self.cb_cache_v.currentText() if hasattr(self, "cb_cache_v") else "f16",
+            "fa": self.chk_fa.isChecked() if hasattr(self, "chk_fa") else True,
+            "offload_kv": self.chk_offload_kv.isChecked() if hasattr(self, "chk_offload_kv") else True,
+            "mmap": self.chk_mmap.isChecked() if hasattr(self, "chk_mmap") else True,
+            "mlock": self.chk_mlock.isChecked() if hasattr(self, "chk_mlock") else False,
+            "prompt_cache": self.chk_prompt_cache.isChecked() if hasattr(self, "chk_prompt_cache") else True,
+
+            # 3. CPU Threads, Batch & RoPE
+            "threads": self.spin_threads.value() if hasattr(self, "spin_threads") else 8,
+            "threads_batch": self.spin_threads_batch.value() if hasattr(self, "spin_threads_batch") else 16,
+            "batch": self.spin_batch.value() if hasattr(self, "spin_batch") else 2048,
+            "ubatch": self.spin_ubatch.value() if hasattr(self, "spin_ubatch") else 512,
+            "parallel": self.spin_parallel.value() if hasattr(self, "spin_parallel") else 1,
+            "cont_batch": self.chk_cont_batch.isChecked() if hasattr(self, "chk_cont_batch") else True,
+            "rope_base": self.spin_rope_base.value() if hasattr(self, "spin_rope_base") else 10000.0,
+            "rope_scale": self.spin_rope_scale.value() if hasattr(self, "spin_rope_scale") else 1.0,
+
+            # 4. Düşünce & Spekülatif
+            "thinking_effort_idx": self.cb_thinking_effort.currentIndex() if hasattr(self, "cb_thinking_effort") else 0,
+            "thinking_tokens": self.spin_thinking_tokens.value() if hasattr(self, "spin_thinking_tokens") else 0,
+            "mtp": self.chk_mtp.isChecked() if hasattr(self, "chk_mtp") else False,
+            "enable_draft": self.chk_enable_draft.isChecked() if hasattr(self, "chk_enable_draft") else False,
+            "draft_path": getattr(self, "selected_draft_path", None),
+            "draft_max": self.spin_draft_max.value() if hasattr(self, "spin_draft_max") else 4,
+
+            # 5. Örnekleyiciler (Samplers)
+            "temp": round(self.spin_temp.value(), 2) if hasattr(self, "spin_temp") else 0.70,
+            "topk": self.spin_topk.value() if hasattr(self, "spin_topk") else 40,
+            "topp": round(self.spin_topp.value(), 2) if hasattr(self, "spin_topp") else 0.90,
+            "minp": round(self.spin_minp.value(), 2) if hasattr(self, "spin_minp") else 0.05,
+            "rep_pen": round(self.spin_rep_pen.value(), 2) if hasattr(self, "spin_rep_pen") else 1.10,
+            "rep_n": self.spin_rep_n.value() if hasattr(self, "spin_rep_n") else 64,
+            "pres_pen": round(self.spin_pres_pen.value(), 2) if hasattr(self, "spin_pres_pen") else 0.0,
+            "freq_pen": round(self.spin_freq_pen.value(), 2) if hasattr(self, "spin_freq_pen") else 0.0,
+            "mirostat_idx": self.cb_mirostat.currentIndex() if hasattr(self, "cb_mirostat") else 0,
+            "seed": self.spin_seed.value() if hasattr(self, "spin_seed") else -1,
+
+            # 6. Gelişmiş Samplers (DRY, XTC, Dynamic Temp, YaRN)
+            "dry_mult": round(self.spin_dry_mult.value(), 2) if hasattr(self, "spin_dry_mult") else 0.0,
+            "dry_base": round(self.spin_dry_base.value(), 2) if hasattr(self, "spin_dry_base") else 1.75,
+            "xtc_prob": round(self.spin_xtc_prob.value(), 2) if hasattr(self, "spin_xtc_prob") else 0.0,
+            "xtc_thresh": round(self.spin_xtc_thresh.value(), 2) if hasattr(self, "spin_xtc_thresh") else 0.10,
+            "dynatemp": round(self.spin_dynatemp.value(), 2) if hasattr(self, "spin_dynatemp") else 0.0,
+            "typical": round(self.spin_typical.value(), 2) if hasattr(self, "spin_typical") else 1.0,
+            "rope_scaling": self.cb_rope_scaling.currentText() if hasattr(self, "cb_rope_scaling") else "Auto (Varsayılan)",
+            "yarn_ext": round(self.spin_yarn_ext.value(), 2) if hasattr(self, "spin_yarn_ext") else -1.0,
+
+            # 7. Şablon, Özel Bayraklar & Preset
+            "chat_template": self.cb_chat_template.currentText() if hasattr(self, "cb_chat_template") else "Otomatik (Modelin Gömülü Jinja Şablonu)",
+            "custom_flags": self.input_custom_flags.text().strip() if hasattr(self, "input_custom_flags") else "",
+            "preset_idx": self.cb_preset.currentIndex() if hasattr(self, "cb_preset") else 0,
+
+            # 8. Dağıtım & Donanım Tercihleri
+            "split_mode": self.cb_split_mode.currentData() if hasattr(self, "cb_split_mode") else "layer",
+            "kv_placement": self.cb_kv_placement.currentData() if hasattr(self, "cb_kv_placement") else "gpu"
+        }
+
+    def save_model_full_config(self, m_path=None):
+        """Aktif modelin 35+ ayarını dosya adı bazında kalıcı olarak config.json'a yazar"""
+        if getattr(self, "_suppress_save", False):
+            return
+        target_path = m_path or getattr(self, "selected_model_path", None)
+        if not target_path or not os.path.exists(target_path):
+            return
+        m_key = os.path.basename(target_path)
+        if "model_vault" not in self.cfg:
+            self.cfg["model_vault"] = {}
+
+        self.cfg["model_vault"][m_key] = self._collect_all_current_settings()
+        self.cfg["last_selected_model_path"] = target_path
+        save_json(CONFIG_FILE, self.cfg)
+
+    def restore_model_full_config(self, target_path):
+        """Bir modele tıklandığında kaydedilmiş 35+ ayarını eksiksiz UI üzerine basar"""
+        if not target_path:
+            return False
+        m_key = os.path.basename(target_path)
+        vault = self.cfg.get("model_vault", {})
+        if m_key not in vault:
+            if "per_model_cfg" in self.cfg and target_path in self.cfg["per_model_cfg"]:
+                saved = self.cfg["per_model_cfg"][target_path]
+            elif "model_profiles" in self.cfg and m_key in self.cfg["model_profiles"]:
+                saved = self.cfg["model_profiles"][m_key]
+            else:
+                return False
+        else:
+            saved = vault[m_key]
+
+        self._suppress_save = True
+        try:
+            base_ctx = self.active_model_info.get("base_context", self.active_model_info.get("max_context", 4096)) if getattr(self, "active_model_info", None) else 8192
+
+            # 0. RoPE Scaling Önceliği
+            saved_scaling = str(saved.get("rope_scaling", "Auto (Varsayılan)"))
+            if hasattr(self, "cb_rope_scaling"):
+                self.cb_rope_scaling.blockSignals(True)
+                self.cb_rope_scaling.setCurrentText(saved_scaling)
+                self.cb_rope_scaling.blockSignals(False)
+
+            is_scale = any(k in saved_scaling.lower() for k in ["yarn", "linear"])
+            scale_val = float(saved.get("rope_scale", 1.0))
+            if is_scale:
+                mult = max(scale_val, 4.0) if scale_val > 1.0 else 4.0
+                t_max = min(1048576, max(int(base_ctx * mult), 262144))
+            else:
+                t_max = base_ctx
+
+            if hasattr(self, "slider_ctx") and hasattr(self, "spin_ctx"):
+                self.slider_ctx.setRange(512, t_max)
+                self.spin_ctx.setRange(512, t_max)
+                req_ctx = min(t_max, int(saved.get("ctx", saved.get("ctx_size", base_ctx))))
+                self.spin_ctx.setValue(req_ctx)
+                self.slider_ctx.setValue(req_ctx)
+
+            if "ngl" in saved and hasattr(self, "spin_ngl"):
+                self.spin_ngl.setValue(int(saved["ngl"]))
+                self.slider_ngl.setValue(int(saved["ngl"]))
+
+            if "context_shift" in saved and hasattr(self, "chk_ctx_shift"):
+                self.chk_ctx_shift.setChecked(bool(saved["context_shift"]))
+
+            # KV Cache
+            if "cache_k" in saved and hasattr(self, "cb_cache_k"):
+                self.cb_cache_k.setCurrentText(str(saved["cache_k"]))
+            if "cache_v" in saved and hasattr(self, "cb_cache_v"):
+                self.cb_cache_v.setCurrentText(str(saved["cache_v"]))
+            if ("fa" in saved or "flash_attn" in saved) and hasattr(self, "chk_fa"):
+                self.chk_fa.setChecked(bool(saved.get("fa", saved.get("flash_attn", True))))
+            if "offload_kv" in saved and hasattr(self, "chk_offload_kv"):
+                self.chk_offload_kv.setChecked(bool(saved["offload_kv"]))
+            if "mmap" in saved and hasattr(self, "chk_mmap"):
+                self.chk_mmap.setChecked(bool(saved["mmap"]))
+            if "mlock" in saved and hasattr(self, "chk_mlock"):
+                self.chk_mlock.setChecked(bool(saved["mlock"]))
+            if "prompt_cache" in saved and hasattr(self, "chk_prompt_cache"):
+                self.chk_prompt_cache.setChecked(bool(saved["prompt_cache"]))
+
+            # Batch & RoPE
+            if "threads" in saved and hasattr(self, "spin_threads"):
+                self.spin_threads.setValue(int(saved["threads"]))
+            if "threads_batch" in saved and hasattr(self, "spin_threads_batch"):
+                self.spin_threads_batch.setValue(int(saved["threads_batch"]))
+            if "batch" in saved and hasattr(self, "spin_batch"):
+                self.spin_batch.setValue(int(saved["batch"]))
+            if "ubatch" in saved and hasattr(self, "spin_ubatch"):
+                self.spin_ubatch.setValue(int(saved["ubatch"]))
+            if "parallel" in saved and hasattr(self, "spin_parallel"):
+                self.spin_parallel.setValue(int(saved["parallel"]))
+            if "cont_batch" in saved and hasattr(self, "chk_cont_batch"):
+                self.chk_cont_batch.setChecked(bool(saved["cont_batch"]))
+            if "rope_base" in saved and hasattr(self, "spin_rope_base"):
+                self.spin_rope_base.setValue(float(saved["rope_base"]))
+            if "rope_scale" in saved and hasattr(self, "spin_rope_scale"):
+                self.spin_rope_scale.setValue(float(saved["rope_scale"]))
+
+            # Düşünce & Spekülatif
+            if "thinking_effort_idx" in saved and hasattr(self, "cb_thinking_effort"):
+                self.cb_thinking_effort.setCurrentIndex(int(saved["thinking_effort_idx"]))
+            if "thinking_tokens" in saved and hasattr(self, "spin_thinking_tokens"):
+                self.spin_thinking_tokens.setValue(int(saved["thinking_tokens"]))
+            if "mtp" in saved and hasattr(self, "chk_mtp"):
+                self.chk_mtp.setChecked(bool(saved["mtp"]))
+            if "enable_draft" in saved and hasattr(self, "chk_enable_draft"):
+                self.chk_enable_draft.setChecked(bool(saved["enable_draft"]))
+            if "draft_path" in saved and saved["draft_path"] and os.path.exists(saved["draft_path"]):
+                self.selected_draft_path = saved["draft_path"]
+                if hasattr(self, "lbl_draft_file"):
+                    self.lbl_draft_file.setText(os.path.basename(saved["draft_path"]))
+            if "draft_max" in saved and hasattr(self, "spin_draft_max"):
+                self.spin_draft_max.setValue(int(saved["draft_max"]))
+
+            # Samplers
+            if "temp" in saved and hasattr(self, "spin_temp"):
+                self.spin_temp.setValue(float(saved["temp"]))
+            if "topk" in saved and hasattr(self, "spin_topk"):
+                self.spin_topk.setValue(int(saved["topk"]))
+            if "topp" in saved and hasattr(self, "spin_topp"):
+                self.spin_topp.setValue(float(saved["topp"]))
+            if "minp" in saved and hasattr(self, "spin_minp"):
+                self.spin_minp.setValue(float(saved["minp"]))
+            if "rep_pen" in saved and hasattr(self, "spin_rep_pen"):
+                self.spin_rep_pen.setValue(float(saved["rep_pen"]))
+            if "rep_n" in saved and hasattr(self, "spin_rep_n"):
+                self.spin_rep_n.setValue(int(saved["rep_n"]))
+            if "pres_pen" in saved and hasattr(self, "spin_pres_pen"):
+                self.spin_pres_pen.setValue(float(saved["pres_pen"]))
+            if "freq_pen" in saved and hasattr(self, "spin_freq_pen"):
+                self.spin_freq_pen.setValue(float(saved["freq_pen"]))
+            if "mirostat_idx" in saved and hasattr(self, "cb_mirostat"):
+                self.cb_mirostat.setCurrentIndex(int(saved["mirostat_idx"]))
+            if "seed" in saved and hasattr(self, "spin_seed"):
+                self.spin_seed.setValue(int(saved["seed"]))
+
+            # Gelişmiş Samplers
+            if "dry_mult" in saved and hasattr(self, "spin_dry_mult"):
+                self.spin_dry_mult.setValue(float(saved["dry_mult"]))
+            if "dry_base" in saved and hasattr(self, "spin_dry_base"):
+                self.spin_dry_base.setValue(float(saved["dry_base"]))
+            if "xtc_prob" in saved and hasattr(self, "spin_xtc_prob"):
+                self.spin_xtc_prob.setValue(float(saved["xtc_prob"]))
+            if "xtc_thresh" in saved and hasattr(self, "spin_xtc_thresh"):
+                self.spin_xtc_thresh.setValue(float(saved["xtc_thresh"]))
+            if "dynatemp" in saved and hasattr(self, "spin_dynatemp"):
+                self.spin_dynatemp.setValue(float(saved["dynatemp"]))
+            if "typical" in saved and hasattr(self, "spin_typical"):
+                self.spin_typical.setValue(float(saved["typical"]))
+            if "yarn_ext" in saved and hasattr(self, "spin_yarn_ext"):
+                self.spin_yarn_ext.setValue(float(saved["yarn_ext"]))
+
+            # Şablon & Preset
+            if "chat_template" in saved and hasattr(self, "cb_chat_template"):
+                self.cb_chat_template.setCurrentText(str(saved["chat_template"]))
+            if "custom_flags" in saved and hasattr(self, "input_custom_flags"):
+                self.input_custom_flags.setText(str(saved["custom_flags"]))
+            if "preset_idx" in saved and hasattr(self, "cb_preset"):
+                self.cb_preset.blockSignals(True)
+                self.cb_preset.setCurrentIndex(int(saved["preset_idx"]))
+                self.cb_preset.blockSignals(False)
+
+            # Donanım & Dağıtım
+            if "split_mode" in saved and hasattr(self, "cb_split_mode"):
+                idx = self.cb_split_mode.findData(saved["split_mode"])
+                if idx >= 0: self.cb_split_mode.setCurrentIndex(idx)
+            if "kv_placement" in saved and hasattr(self, "cb_kv_placement"):
+                idx = self.cb_kv_placement.findData(saved["kv_placement"])
+                if idx >= 0: self.cb_kv_placement.setCurrentIndex(idx)
+
+            self.recalculate_memory_estimate()
+            return True
+        finally:
+            self._suppress_save = False
+
+
+
+    # Köprü takma adları (Geriye dönük tam uyum)
+    def _save_current_model_profile(self): self.save_model_full_config()
+    def _save_active_model_settings(self): self.save_model_full_config()
+    def _restore_model_settings(self, p): return self.restore_model_full_config(p)
+    def restore_model_custom_config(self, p): return self.restore_model_full_config(p)
+    def save_current_model_custom_config(self): self.save_model_full_config()
+
     def load_selected_model(self):
-        if not self.server_service_enabled:
+        if not getattr(self, "selected_model_path", None) or not os.path.exists(self.selected_model_path):
+            if getattr(self, "active_model_info", None) and self.active_model_info.get("path"):
+                self.selected_model_path = self.active_model_info["path"]
+            else:
+                return
+
+        if not getattr(self, "server_service_enabled", True):
             return
-        if not self.selected_model_path or not os.path.exists(self.selected_model_path):
-            return
+
+        # Çalışan modelin kimliğini burada mühürle
+        self.running_model_path = self.selected_model_path
+        self.running_model_name = os.path.basename(self.running_model_path)
+        self._locked_running_model = self.running_model_name
+        if getattr(self, "active_model_info", None):
+            self.loaded_model_info = dict(self.active_model_info)
+        else:
+            self.loaded_model_info = {"path": self.running_model_path, "name": self.running_model_name}
 
         engine = "llama-server"
+        host = "0.0.0.0" if self.chk_lan.isChecked() else "127.0.0.1"
+        port = getattr(self, "upstream_port", self.spin_port.value() + 1)
         ngl = self.spin_ngl.value()
         ctx = self.spin_ctx.value()
-        port = getattr(self, 'upstream_port', self.spin_port.value() + 1)
-        host = "0.0.0.0" if self.chk_lan.isChecked() else "127.0.0.1"
+        extra = []
 
-        if "per_model_cfg" not in self.cfg:
-            self.cfg["per_model_cfg"] = {}
-        self.save_current_model_custom_config()
-
-        extra = [
-            "-t", str(self.spin_threads.value()),
-            "-tb", str(self.spin_threads_batch.value()),
-            "-b", str(self.spin_batch.value()),
-            "-ub", str(self.spin_ubatch.value()),
-            "-np", str(self.spin_parallel.value()),
-            "-ctk", self.cb_cache_k.currentText(),
-            "-ctv", self.cb_cache_v.currentText(),
-            "--temp", f"{self.spin_temp.value():.2f}",
-            "--top-k", str(self.spin_topk.value()),
-            "--top-p", f"{self.spin_topp.value():.2f}",
-            "--min-p", f"{self.spin_minp.value():.2f}",
-            "--repeat-penalty", f"{self.spin_rep_pen.value():.2f}",
-            "--repeat-last-n", str(self.spin_rep_n.value()),
-            "--presence-penalty", f"{self.spin_pres_pen.value():.2f}",
-            "--frequency-penalty", f"{self.spin_freq_pen.value():.2f}",
-            "-s", str(self.spin_seed.value()),
-            "-fa", "on" if self.chk_fa.isChecked() else "off"
-        ]
-
-        if self.spin_rope_base.value() > 0:
-            extra.extend(["--rope-freq-base", str(self.spin_rope_base.value())])
-        if self.spin_rope_scale.value() > 0 and self.spin_rope_scale.value() != 1.0:
-            extra.extend(["--rope-freq-scale", str(self.spin_rope_scale.value())])
-
-        miro = self.cb_mirostat.currentIndex()
-        if miro > 0:
-            extra.extend(["--mirostat", str(miro)])
-
-        if self.chk_cont_batch.isChecked(): extra.append("-cb")
-        if not self.chk_mmap.isChecked(): extra.append("--no-mmap")
-        if self.chk_mlock.isChecked(): extra.append("--mlock")
         if hasattr(self, "chk_ctx_shift"):
             if self.chk_ctx_shift.isChecked():
                 extra.append("--context-shift")
@@ -4034,7 +4287,8 @@ class TrayAIApp(QMainWindow):
 
         # LM Studio Seviyesinde Performans Bayrakları (Flash Attention, Micro-batch, Fiziksel Thread)
         if "-fa" not in extra and "--flash-attn" not in extra:
-            extra.append("-fa")
+            fa_val = "on" if (hasattr(self, "chk_fa") and self.chk_fa.isChecked()) else "off"
+            extra.extend(["-fa", fa_val])
         if "-ub" not in extra and "--ubatch" not in extra:
             extra.extend(["-ub", "512"])
         if "-t" not in extra and "--threads" not in extra:
@@ -4099,6 +4353,10 @@ class TrayAIApp(QMainWindow):
         if hasattr(self, 'load_tracker_timer'): self.load_tracker_timer.stop()
         self.server_mgr.stop_model()
         self.poller.reset_ready()
+        self.running_model_path = None
+        self.running_model_name = None
+        self._locked_running_model = None
+        self.loaded_model_info = None
         self.load_progress_bar.setValue(0)
         self.bar_prompt_activity.setValue(0)
         self.lbl_load_stage.setText(self.t("lbl_no_model"))
@@ -4174,13 +4432,15 @@ class TrayAIApp(QMainWindow):
         if hasattr(self, "load_tracker_timer"):
             self.load_tracker_timer.stop()
         self.load_progress_bar.setValue(100)
-        m_name = os.path.basename(self.selected_model_path) if self.selected_model_path else "Model"
+        m_name = getattr(self, "running_model_name", None) or (os.path.basename(self.running_model_path) if getattr(self, "running_model_path", None) else "Model")
         self.lbl_load_stage.setText(f"✅ {m_name} (%100)")
         self.lbl_tel_phase.setText(self.t("tel_waiting"))
         self.set_status_badge("ready", self.t("srv_ready"))
         self.btn_drop_cache.setEnabled(False)
         self.btn_unload_model.setEnabled(True)
         tray_ref.setIcon(get_tray_icon("active"))
+        self._refresh_model_action_ui()
+
 
     def on_tool_call_log(self, msg):
         self.remote_tool_active = True
@@ -4311,6 +4571,8 @@ class MainRunner:
             self.toggle_popup()
 
     def exit_app(self):
+        if hasattr(self.window, 'save_model_full_config'):
+            self.window.save_model_full_config()
         self.window.poller.stop()
         if hasattr(self.window, 'api_gateway'): self.window.api_gateway.stop()
         if self.window.server_mgr.is_running():

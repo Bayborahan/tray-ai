@@ -527,6 +527,7 @@ class ChatTesterDialog(QDialog):
         self.current_active_bubble = None
         self.current_attached_image = None
         self.is_generating = False
+        self._last_start_time = 0.0
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -642,8 +643,8 @@ class ChatTesterDialog(QDialog):
 
         # BİRLEŞİK GÖNDER / DURDUR BUTONU
         self.btn_action = QPushButton("➤ Gönder")
-        self.btn_action.setAutoDefault(True)
-        self.btn_action.setDefault(True)
+        self.btn_action.setAutoDefault(False)
+        self.btn_action.setDefault(False)
         self.btn_action.setFixedHeight(38)
         self.btn_action.setFixedWidth(95)
         self.btn_action.setStyleSheet("background: #7aa2f7; color: #15161e; font-weight: bold; font-size: 12px; border-radius: 6px;")
@@ -672,7 +673,9 @@ class ChatTesterDialog(QDialog):
 
     def on_action_triggered(self):
         if self.is_generating:
-            self.abort_generation()
+            # Enter tuşunun aynı anda gönderip hemen iptal etmesini engelle (350ms koruma)
+            if (time.time() - self._last_start_time) > 0.35:
+                self.abort_generation()
         else:
             self.send_message()
 
@@ -680,6 +683,12 @@ class ChatTesterDialog(QDialog):
         if event.key() == Qt.Key.Key_Escape and self.is_generating:
             self.abort_generation()
             event.accept()
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self.input_prompt.hasFocus() and not self.is_generating:
+                self.send_message()
+                event.accept()
+            else:
+                event.ignore()
         else:
             super().keyPressEvent(event)
 
@@ -838,6 +847,7 @@ class ChatTesterDialog(QDialog):
         self.current_active_bubble = ai_b
 
         QTimer.singleShot(15, self.scroll_to_bottom)
+        self._last_start_time = time.time()
         self.set_generating_state(True)
 
         self.worker = ChatStreamWorker(self.engine_port, m_id, self.messages)
@@ -893,6 +903,7 @@ class ChatTesterDialog(QDialog):
         self.current_active_bubble = ai_b
 
         QTimer.singleShot(15, self.scroll_to_bottom)
+        self._last_start_time = time.time()
         self.set_generating_state(True)
 
         self.worker = ChatStreamWorker(self.engine_port, m_id, self.messages)
@@ -920,6 +931,7 @@ class ChatTesterDialog(QDialog):
         if not self.is_generating:
             return
         self.is_generating = False
+        self._last_start_time = 0.0
         if self.current_active_bubble:
             self.current_active_bubble.finalize_markdown()
             full_ans = self.current_active_bubble.response_buffer
@@ -939,6 +951,7 @@ class ChatTesterDialog(QDialog):
         if not self.is_generating:
             return
         self.is_generating = False
+        self._last_start_time = 0.0
 
         if self.worker:
             try:
