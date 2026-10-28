@@ -1,21 +1,50 @@
 # 🚀 Tray-AI
 
-A high-performance, lightweight GGUF Large Language Model (LLM) runner and server that operates quietly in your Linux system tray, packing comprehensive control into a sleek, minimalist interface.
+A high-performance, lightweight GGUF Large Language Model (LLM) & Vision (VLM) server operating quietly in your Linux system tray. Packing comprehensive hardware control, an autonomous Linux terminal agent, and dual OpenAI/Ollama APIs into a sleek, minimalist PyQt6 interface.
 
-Tray-AI is designed as an ultra-fast, performance-oriented, and distraction-free native Linux alternative to resource-heavy Electron tools like LM Studio.
+Tray-AI is engineered as an ultra-fast, performance-oriented, zero-overhead native Linux alternative to resource-heavy Electron tools like LM Studio and Ollama.
 
 ---
 
 ## ✨ Key Features (What Makes Tray-AI Stand Out)
 
-- ⚡ **Native Hardware Acceleration (Vulkan & AVX2):** Zero-overhead inference powered directly by official `llama.cpp` server binaries compiled with Vulkan and AVX2/AVX-512 instruction sets.
-- 📡 **Real-Time Live Telemetry:** Uninterrupted token speed tracking (Tokens/sec), prompt processing progress, and live context utilization without artificial UI freezes during Tool/Agent calls.
-- 🧠 **Dynamic Architecture & Metadata Sync:** Automatically detects MTP (Multi-Token Prediction), YaRN context scaling up to 1M tokens, speculative drafting, and optimal sampling temperatures straight from model metadata.
-- 🔧 **Native Remote Tool & MCP Support:** Full Jinja template parsing and special token forwarding (`--jinja`, `--special`) for IDE extensions (Cursor, Continue.dev, Cline, Roo Code) and agentic workflows.
-- 📥 **Integrated Hugging Face Hub:** Discover, search, filter (Trending, Downloads, Likes), and download quantized GGUF models with resume/pause capabilities directly inside the app.
-- 🧹 **One-Click RAM Cache Flush:** Safely clear Linux kernel pagecache and system memory after unloading large models to keep your workstation fresh.
-- 🐳 **Minimalist & Resource Conscious:** Sits unobtrusively in your Linux system tray without desktop clutter, dedicating virtually all CPU, RAM, and VRAM strictly to model inference.
-- 🌐 **OpenAI-Compatible Local API:** Instantly spawns a standards-compliant `/v1` endpoint for seamless integration with any local or network client.
+### 🐧 Autonomous Linux SysAdmin Copilot (In-Chat Terminal Agent)
+- **Live Terminal Execution:** Directly inspect, troubleshoot, and monitor your Linux workstation from inside the chat window.
+- **Human-in-the-Loop & Sudo Shield:** Safe command execution with one-click approval cards and secure password prompts for `sudo` operations.
+- **Autonomous Observation Loop:** Safe inspection commands (`uname`, `free`, `lspci`, `sensors`, `ps`) run automatically on auto-pilot, returning terminal logs directly back into the model's context for instant diagnosis.
+
+### ⚖️ Advanced Asymmetric Multi-GPU & iGPU Load Balancer
+- **Main Compute Device Selection (`--main-gpu`):** Delegate compute graphs, scratch buffers, and prompt processing to any specific GPU/APU to keep your primary display buttery smooth.
+- **Desktop VRAM Headroom Protection:** Reserve dedicated VRAM (e.g., 2.0–3.0 GB) for your display server (Xorg/Wayland, desktop environments, browsers), ensuring your graphical workspace never freezes or crashes.
+- **Intelligent Usable VRAM Matrix (`-ts`):** Proportional layer splitting calculated dynamically from net usable memory across hybrid and asymmetric configurations (e.g., dGPU + iGPU, dual NVIDIA/AMD setups, or mixed VRAM pools).
+- **Flexible KV Cache Hosting:** Offload long context buffers directly to System RAM (`-nkvo`) for massive context windows, keeping high-speed VRAM strictly reserved for model weights.
+
+### 🔄 Infinite Context Crash Prevention & Instant Presets
+- **Crash-Proof Context Shifting (`--context-shift`):** Seamlessly handles 131K–262K+ context limits via intelligent sliding window eviction—preventing sudden `llama-server` process aborts or slot exhaustion crashes.
+- **One-Click Sampler Presets:** Instantly switch between tuned configurations:
+  - 🎯 **Deterministic Coding:** Low temperature, strict repetition penalties.
+  - 🧠 **Deep Reasoning:** Tuned for Qwen3, DeepSeek-R1, and thinking models.
+  - 🎭 **Creative Chat & Roleplay:** Enabled DRY, XTC, and dynamic temperature.
+  - 🤖 **Structured JSON / Tool Calling:** Zero-temp deterministic output for MCP and agents.
+
+### 💬 Modern Chat Playground (Vision, Thinking & Markdown)
+- **Messaging App Bubble Layout:** Distinct user (right) and assistant (left) cards.
+- **Dedicated Thinking Process Box:** Collapsible and visually isolated `💭 Reasoning` cards for models with `<think>` streams.
+- **Drag-and-Drop Multimodal Vision:** Drop any image (PNG, JPG, WEBP) into the chat for instant visual reasoning with compatible VLMs (`--mmproj`).
+- **Markdown Export:** Export your complete multi-turn discussions and troubleshooting logs directly into `.md` files.
+
+### ⚡ Resumable 4-Thread Hugging Face Engine
+- **Segmented Fast Downloader:** 4 parallel download streams utilizing byte-range requests with instant pause/resume across system reboots via persistent `.state.json` trackers.
+- **Integrity & GGUF Validation:** Automatic SHA-256 hash checks and GGUF header validation prior to finalizing models.
+- **Organized Hierarchy:** Clean publisher/model structure (`publisher/model/quant.gguf`).
+
+### 🌐 Dual Protocol API Gateway & System Integrations
+- **OpenAI & Ollama Compatible (`:8080`):** Out-of-the-box compatibility with Cursor, Continue.dev, Cline, Open WebUI, and standard Ollama CLI workflows.
+- **🎙️ Local Whisper Bas-Konuş:** Integrated voice assistant powered by native `whisper-cli`.
+- **🧹 One-Click RAM Cache Flush:** Clean Linux kernel pagecache and system memory after unloading large models.
+- **📦 All-in-One Linux Packages:** Zero runtime dependencies—pre-compiled Vulkan & AVX2 `llama.cpp` engines bundled directly into `.deb` and `.rpm` packages.
+
+
 ## 🛠️ Installation & Quick Start
 
 Tray-AI comes pre-packaged with all its dependencies for a seamless installation. You don't even need Python installed on your system!
